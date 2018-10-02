@@ -15,6 +15,6 @@ build: [
 ]
 
 depends: [
-  "tjr_lib"
+  "tjr_btree"
 ]
 
