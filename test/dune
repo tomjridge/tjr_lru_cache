@@ -1,6 +1,6 @@
 (executables
   (names test_main)
-  (libraries ppx_deriving_yojson.runtime tjr_lru_cache ))
+  (libraries tjr_lru_cache ))
 
 ; ppx_deriving_yojson.runtime is referenced from isa_btree FIXME
 
