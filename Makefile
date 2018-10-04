@@ -1,16 +1,18 @@
+DUNE:=opam exec dune
+
 build:
-	dune build @install
-	dune build test/test_main.exe
+	$(DUNE) build @install
+	$(DUNE) build test/test_main.exe
 
 install:
-	dune install
+	$(DUNE) install
 
 clean:
-	dune clean
+	$(DUNE) clean
 
 
 run_tests:
-	dune exec test/test_main.exe 1 5
+	$(DUNE) exec test/test_main.exe 1 5
 
 # run_more_tests:
-# 	dune exec test/test_main.exe 1 10
+# 	$(DUNE) exec test/test_main.exe 1 10
