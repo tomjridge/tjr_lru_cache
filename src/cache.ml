@@ -11,8 +11,9 @@
 (* we want to be able to take eg a map_ops and produce a cached
    version *)
 
+open Tjr_monad.Monad
 open Tjr_btree
-open Base_types
+(* open Base_types *)
 open Map_ops
 
 (** The cache maintains an internal clock. *)
@@ -78,7 +79,7 @@ type ('k,'v) cache_state = {
 }
 
 (** The [cache_ops] are a monadic reference to the cache_state. *)
-type ('k,'v,'t) cache_ops = ( ('k,'v)cache_state,'t) mref
+type ('k,'v,'t) cache_ops = ( ('k,'v)cache_state,'t) Tjr_monad.Mref_plus.mref
 
 
 (** For testing, we typically need to normalize wrt. time *)
@@ -170,30 +171,65 @@ let sync_evictees ~monad_ops ~map_ops =
             | false -> loop es
             | true -> (
                 (* need to delete *)
+                (* FIXME and mark clean? *)
                 delete k >>= (fun () -> loop es) ))
         | Some v -> (
             match dirty with
             | false -> loop es
             | true -> (
                 (* write out and continue *)
+                (* FIXME and mark clean? *)
                 insert k v >>= (fun () -> loop es) )))
   in
   fun evictees -> loop evictees
 
-(** If we flush all entries (on a sync), we can the mark cache as clean. *)
-let mark_all_clean ~monad_ops ~cache_ops = 
-  let ( >>= ) = monad_ops.bind in
-  cache_ops.get () >>= fun c ->
-  let dirty = false in
-  let c' = Pmap.map (fun (v,t,d) -> (v,t,dirty)) c in
-  cache_ops.set c'
 
-(** [sync] all entries to the lower map. *)
-let sync ~monad_ops ~map_ops ~cache_ops =
+open Tjr_monad.Mref_plus
+
+let mark_entry_clean' k map =
+  let dirty = false in
+  try 
+    Pmap.find k map |> fun (v,t,dirty_) ->
+    Pmap.add k (v,t,dirty) map |> fun map ->
+    map
+  with Not_found -> map
+
+let mark_entry_clean ~cache_ops = 
+  fun k -> 
+    cache_ops.with_ref (fun c -> 
+        let c' = mark_entry_clean' k c in
+        (),c')
+      
+let mark_all_clean' map =
+  let dirty = false in
+  Pmap.map (fun (v,t,d) -> (v,t,dirty)) map
+
+
+(** If we flush all entries (on a sync), we can the mark cache as clean. *)
+let mark_all_clean ~cache_ops = 
+  cache_ops.with_ref (fun c -> 
+      let c' = mark_all_clean' c in
+      (),c')
+
+(** [sync_all_keys] to the lower map. *)
+let sync_all_keys ~monad_ops ~map_ops ~cache_ops =
   let ( >>= ) = monad_ops.bind in
-  cache_ops.get () >>= fun c ->
-  sync_evictees ~monad_ops ~map_ops (Pmap.bindings c) >>= fun () ->
-  mark_all_clean ~monad_ops ~cache_ops
+  (* FIXME we want to do this in such a way that we do not block
+     subsequent operations on the in-mem map *)
+  cache_ops.with_ref (fun c ->
+      sync_evictees ~monad_ops ~map_ops (Pmap.bindings c) >>= fun () ->
+      mark_all_clean ~monad_ops ~cache_ops
+
+
+(** Sync a particular key/value to the lower map. *)
+let sync_key ~monad_ops ~map_ops ~cache_ops =
+  let ( >>= ) = monad_ops.bind in
+  fun k -> 
+    cache_ops.with_ref (fun pmap ->
+    try 
+      sync_evictees ~monad_ops ~map_ops [(k,Pmap.find k pmap)] >>= fun () ->
+      (* FIXME need to mark entry as clean; but this needs to be done atomically with the sync *)
+      (),mark_
 
 (** Construct the cached map on top of an existing map. The [evict_hook] is for testing and can be ignored. *)
 let make_cached_map ~monad_ops ~map_ops ~cache_ops =
