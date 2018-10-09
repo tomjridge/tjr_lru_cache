@@ -1,4 +1,5 @@
-(** An LRU cache on top of a map. *)
+(** An LRU cache on top of a flushable map. *)
+
 
 
 (* TODO
@@ -8,99 +9,22 @@
 
 *)
 
-(*
 
-* Sync behaviour -------------------------------------------------------
-
-Our main use for this module is as a frontend to an uncached KV store
-(see tjr_kv). 
-
-There we target the following API: FIXME perhaps move the api here?
-
-type blocking_mode = Continue | Block
-
-type persistent_mode = Transient | Persistent of blocking_mode
-
-type mode = persistent_mode
-
-type ('k,'v,'t) pmap_ops = {
-  find: 'k -> ('v option,'t) m;
-  insert: mode -> 'k -> 'v -> (unit,'t) m;
-  delete: mode -> 'k -> (unit,'t) m;
-  sync_key: blocking_mode -> 'k -> (unit,'t) m;
-  sync_all_keys: blocking_mode -> unit -> (unit,'t) m;
-}
-
-This API is expected to be used by many threads. In particular, for [sync_key]:
-
-Concurrent actions:
-
-- thread A: insert_T(k,v); sync_key(k)
-- thread B: insert_T(k,v'); sync_key(k)
-
-Then the insert of v' may be synced by thread A's sync_key.
-
-
-Similarly, for [sync_all_keys]:
-
-- thread A: insert_T(k,v); sync_all_keys
-- thread B: insert_T(k,v')
-
-Thread A's call to sync_all_keys may result in (k,v') rather than (k,v).
-
-
-* Non-blocking design --------------------------------------------------
-
-We want sync operations to be non-blocking.
-
-- For the thread that issues the sync, blocking_mode=Continue means that we don't wait for the sync to complete
-
-- Transient operations from other threads should not block while a sync is taking place.
-
-- A concurrent sync_all_keys operation (perhaps occuring halfway through an existing sync) should avoid re-syncing keys that have already been synced.
-
-
-The design (for tjr_kv) has a single active thread servicing the pcache. If this thread is solely responsible for sync_all_keys, then transient operations will block (till the thread completes and can service another message from the LRU cache).
-
-Thus, the question is how to service the sync_all_keys operation in the pcache.
-
-FIXME another issue: how to suspend a thread in the LRU till we receive notification of the sync completion. For LWT we can just pass some mbox var. For the API perhaps we have a callback function which updates the system state.
-
-NOTE LMDB has "There can be multiple simultaneously active read-only transactions but only one that can write. Once a single read-write transaction is opened, all further attempts to begin one will block until the first one is committed or aborted."
-
-* Consumed API ---------------------------------------------------------
-
-The LRU provides a "syncable/blocking" map API.
-
-FIXME terminology: perhaps persistent_mode should be sync_mode? Or should we separate the sync operation from the durability and blocking requirement?
-
-FIXME sync is a bad word because it implies symmetrical operation, whereas a sync is really an operation at the API which forces changes downwards (flush has this connotation).
-
-We build it on top of an API which exposes map-like operations together with a sync operation. So the LRU is really just an LRU cache of a syncable map. 
-
-A non-blocking operation can put a msg on the queue and return immediately. A blocking operation has to listen for the reply before returning. There is a question of whether to implement a reply queue or use some simpler mechanism (callback or mbox var). Probably best to use a simple callback of type () -> 'a m
-
-
-* Marking entries clean ------------------------------------------------
-
-On a sync_all_keys call, we can dispatch to the lower layer, and mark all entries clean at that point, without waiting for the return. We only need to wait for the return if the sync_all_keys call is blocking (but we can still mark the entries clean... the blocking behaviour is a notification thing, but marking entries clean is just to record in memory that these entries no longer need to be flushed).
-
-
-*)
-
-(* we want to be able to take eg a map_ops and produce a cached
+(* we want to be able to take something like an uncached kv map and produce a cached
    version *)
-
 open Tjr_monad.Monad
 open Tjr_btree
 (* open Base_types *)
 open Map_ops
+open Flushable_map_api.Types
 
 (** The cache maintains an internal clock. *)
 type time = int
 
 (** Dirty blocks are marked using a bool. *)
 type dirty = bool
+
+module Map_int = Tjr_fs_shared.Map_int
 
 (** We maintain a queue as a map from time to key that was accessed at
    that time. *)
@@ -114,7 +38,7 @@ FIXME can also use first class modules to produce polymorphic ops
 *)
 
 (** Polymorphic map module. *)
-module Pmap = struct 
+module Poly_map = struct 
   type ('k,'v) t = (*ExtLib.*) ('k,'v)PMap.t
   let map: ('v -> 'u) -> ('k,'v) t -> ('k,'u) t = PMap.map
   (* FIXME bindings and cardinal should be in ExtLib; also others *)
@@ -137,7 +61,7 @@ end
 (** The [cache_state] consists of:
 
 - [max_size]: the max number of entries in the cache
-- [evict_count]: number of entries to evict when cache full
+- [evict_count]: number of entries to evict when cache full; for [tjr_kv] performance is best when the [evict_count] is such that the evictees fit nicely in a block
 - [current]: the current time (monotonically increasing)
 - [map]: the cached part of the map (from key to value option, with a time and a dirty flag
 - [queue]: a map from time to key that was accessed at that time; only holds the latest time a key was accessed (earlier entries for key k are deleted when a new operation on k occurs). 
@@ -154,8 +78,8 @@ type ('k,'v) cache_state = {
   max_size: int;
   evict_count: int; (* number to evict when cache full *)
   current: time;
-  map: ('k,'v option*time*dirty) Pmap.t;  
-  queue: 'k Queue.t; (* map from time to key that was accessed at that time *)
+  map: ('k,'v option*time*dirty) Poly_map.t;  
+  queue: 'k Queue.t; (** map from time to key that was accessed at that time *)
 }
 
 (** The [cache_ops] are a monadic reference to the cache_state. *)
@@ -165,7 +89,7 @@ type ('k,'v,'t) cache_ops = ( ('k,'v)cache_state,'t) Tjr_monad.Mref_plus.mref
 (** For testing, we typically need to normalize wrt. time *)
 let normalize c =
   (* we need to map times to times *)
-  let t_map = ref Map_int.empty in
+  let t_map = ref Queue.empty in
   let time = ref 0 in
   let queue = ref Queue.empty in
   Queue.iter
@@ -178,7 +102,7 @@ let normalize c =
     c.queue;
   {c with
    current=(!time);
-   map=Pmap.map (fun (v,t,d) -> (v,Map_int.find t (!t_map),d)) c.map;
+   map=Poly_map.map (fun (v,t,d) -> (v,Map_int.find t (!t_map),d)) c.map;
    queue=(!queue) }
 
 let then_ f x = (if x=0 then f () else x)
@@ -189,8 +113,8 @@ let compare c1 c2 =
   Test.test(fun _ -> assert (c1.max_size = c2.max_size));
   (Pervasives.compare c1.current c2.current) |> then_
     (fun () -> Pervasives.compare 
-        (c1.map |> Pmap.bindings)
-        (c2.map |> Pmap.bindings)) |> then_
+        (c1.map |> Poly_map.bindings)
+        (c2.map |> Poly_map.bindings)) |> then_
     (fun () -> Pervasives.compare
         (c1.queue |> Map_int.bindings)
         (c2.queue |> Map_int.bindings))
@@ -201,26 +125,24 @@ let mk_initial_cache ~compare_k = {
   max_size=8;
   evict_count=4;
   current=0;
-  map=((Pmap.empty compare_k):('k,'v)Pmap.t);
+  map=((Poly_map.empty compare_k):('k,'v)Poly_map.t);
   queue=Queue.empty
 }
 
+(** Cache wellformedness, check various invariants. 
 
-(* the cache never has more than max_size elts; the queue never has
-     more than max_size elts 
-
-     all k in map are in the queue; iff
-
-     map and queue agree on timings
+- the cache never has more than max_size elts 
+- the queue never has more than max_size elts 
+- all k in map are in the queue; iff
+- map and queue agree on timings
 
 *)
-(** Cache wellformedness, check various invariants. *)
 let wf c =
   Test.test @@ fun () -> 
-  assert (Pmap.cardinal c.map <= c.max_size);
+  assert (Poly_map.cardinal c.map <= c.max_size);
   assert (Queue.cardinal c.queue <= c.max_size);
-  assert (Pmap.cardinal c.map = Queue.cardinal c.queue);
-  Pmap.iter (fun k (v,t,d) -> assert(Queue.find t c.queue = k)) c.map;
+  assert (Poly_map.cardinal c.map = Queue.cardinal c.queue);
+  Poly_map.iter (fun k (v,t,d) -> assert(Queue.find t c.queue = k)) c.map;
   ()
 
 
@@ -235,11 +157,12 @@ exception E_
    the entire cache *)
 (* FIXME the following targets only insert and delete in the lower
    map; but we want to target insert_many probably *)
+
 (** We [sync_evictees] by calling the relevant operations on the lower map. *)
-let sync_evictees ~monad_ops ~map_ops =
+let sync_evictees ~monad_ops ~(lower:('k,'v,'t)flushable_map_ops) =
   let ( >>= ) = monad_ops.bind in
   let return = monad_ops.return in
-  dest_map_ops map_ops @@ fun ~find ~insert ~delete ~insert_many ->
+  let { find; insert; delete; sync_key; sync_all_keys } = lower in
   let rec loop es =
     match es with
     | [] -> return ()
@@ -269,8 +192,8 @@ open Tjr_monad.Mref_plus
 let mark_entry_clean' k map =
   let dirty = false in
   try 
-    Pmap.find k map |> fun (v,t,dirty_) ->
-    Pmap.add k (v,t,dirty) map |> fun map ->
+    Poly_map.find k map |> fun (v,t,dirty_) ->
+    Poly_map.add k (v,t,dirty) map |> fun map ->
     map
   with Not_found -> map
 
@@ -282,7 +205,7 @@ let mark_entry_clean ~cache_ops =
       
 let mark_all_clean' map =
   let dirty = false in
-  Pmap.map (fun (v,t,d) -> (v,t,dirty)) map
+  Poly_map.map (fun (v,t,d) -> (v,t,dirty)) map
 
 
 (** If we flush all entries (on a sync), we can the mark cache as clean. *)
@@ -298,7 +221,7 @@ let sync_all_keys ~monad_ops ~map_ops ~cache_ops =
   (* FIXME we want to do this in such a way that we do not block
      subsequent operations on the in-mem map *)
   cache_ops.with_ref (fun c ->
-      sync_evictees ~monad_ops ~map_ops (Pmap.bindings c) >>= fun () ->
+      sync_evictees ~monad_ops ~map_ops (Poly_map.bindings c) >>= fun () ->
       mark_all_clean ~monad_ops ~cache_ops
 
 
@@ -308,7 +231,7 @@ let sync_key ~monad_ops ~map_ops ~cache_ops =
   fun k -> 
     cache_ops.with_ref (fun pmap ->
     try 
-      sync_evictees ~monad_ops ~map_ops [(k,Pmap.find k pmap)] >>= fun () ->
+      sync_evictees ~monad_ops ~map_ops [(k,Poly_map.find k pmap)] >>= fun () ->
       (* FIXME need to mark entry as clean; but this needs to be done atomically with the sync *)
       (),mark_
 
@@ -325,7 +248,7 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
   in
 
   let maybe_flush_evictees c = (
-    let card = Pmap.cardinal c.map in
+    let card = Poly_map.cardinal c.map in
     match (card > c.max_size) with (* FIXME inefficient *)
     | false -> put_cache c
     | true -> (
@@ -343,8 +266,8 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
             Queue.iter 
               (fun time k -> 
                  queue:=Queue.remove time !queue;
-                 evictees:=(k,Pmap.find k c.map)::!evictees;
-                 map:=Pmap.remove k !map;
+                 evictees:=(k,Poly_map.find k c.map)::!evictees;
+                 map:=Poly_map.remove k !map;
                  count:=!count +1;
                  if !count >= n then raise E_ else ())
               c.queue) 
@@ -360,10 +283,10 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
     cache_ops.get () >>= fun c ->
     (* try to find in cache *)
     try (
-      let (v,time,dirty) = Pmap.find k c.map in          
+      let (v,time,dirty) = Poly_map.find k c.map in          
       (* update time *)
       let time' = c.current in
-      let c = {c with map=(Pmap.add k (v,time',dirty) c.map) } in
+      let c = {c with map=(Poly_map.add k (v,time',dirty) c.map) } in
       (* remove entry from queue *)
       let c = {c with queue=(Queue.remove time c.queue) } in
       (* add new entry *)
@@ -376,7 +299,7 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
         (* update cache *)
         let time = c.current in
         let dirty = false in
-        let c = {c with map=(Pmap.add k (v,time,dirty) c.map) } in
+        let c = {c with map=(Poly_map.add k (v,time,dirty) c.map) } in
         (* update queue *)
         let c = {c with queue=(Queue.add time k c.queue) } in
         maybe_flush_evictees c >>= (fun () -> return v)))
@@ -385,11 +308,11 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
   let insert k v = (
     cache_ops.get () >>= fun c -> 
     try (
-      let (v_,time,dirty) = Pmap.find k c.map in          
+      let (v_,time,dirty) = Poly_map.find k c.map in          
       (* update time *)
       let time' = c.current in
       let dirty' = true in
-      let c = {c with map=(Pmap.add k (Some v,time',dirty') c.map) } in
+      let c = {c with map=(Poly_map.add k (Some v,time',dirty') c.map) } in
       (* remove entry from queue *)
       let c = {c with queue=(Queue.remove time c.queue) } in
       (* add new entry *)
@@ -400,7 +323,7 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
         (* update cache *)
         let time = c.current in
         let dirty = true in
-        let c = {c with map=(Pmap.add k (Some v,time,dirty) c.map) } in
+        let c = {c with map=(Poly_map.add k (Some v,time,dirty) c.map) } in
         (* update queue *)
         let c = {c with queue=(Queue.add time k c.queue) } in
         maybe_flush_evictees c))
@@ -412,11 +335,11 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
   let delete k = (
     cache_ops.get () >>= fun c -> 
     try (
-      let (v_,time,dirty) = Pmap.find k c.map in          
+      let (v_,time,dirty) = Poly_map.find k c.map in          
       (* update time *)
       let time' = c.current in
       let dirty' = true in
-      let c = {c with map=(Pmap.add k (None,time',dirty') c.map) } in
+      let c = {c with map=(Poly_map.add k (None,time',dirty') c.map) } in
       (* remove entry from queue *)
       let c = {c with queue=(Queue.remove time c.queue) } in
       (* add new entry *)
@@ -425,7 +348,7 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
     with Not_found -> (
         let time = c.current in
         let dirty = true in
-        let c = {c with map=(Pmap.add k (None,time,dirty) c.map)} in
+        let c = {c with map=(Poly_map.add k (None,time,dirty) c.map)} in
         (* add new entry to queue *)
         let c = {c with queue=(Queue.add time k c.queue) } in
         (* update cache *)            
