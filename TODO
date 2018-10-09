@@ -1,0 +1,4 @@
+-*- org -*-
+
+- test performance of LRU; we want fs performance limited by disk not
+  intermediate caching

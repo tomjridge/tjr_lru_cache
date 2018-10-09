@@ -8,6 +8,86 @@
 
 *)
 
+(*
+
+* Sync behaviour -------------------------------------------------------
+
+Our main use for this module is as a frontend to an uncached KV store
+(see tjr_kv). 
+
+There we target the following API: FIXME perhaps move the api here?
+
+type blocking_mode = Continue | Block
+
+type persistent_mode = Transient | Persistent of blocking_mode
+
+type mode = persistent_mode
+
+type ('k,'v,'t) pmap_ops = {
+  find: 'k -> ('v option,'t) m;
+  insert: mode -> 'k -> 'v -> (unit,'t) m;
+  delete: mode -> 'k -> (unit,'t) m;
+  sync_key: blocking_mode -> 'k -> (unit,'t) m;
+  sync_all_keys: blocking_mode -> unit -> (unit,'t) m;
+}
+
+This API is expected to be used by many threads. In particular, for [sync_key]:
+
+Concurrent actions:
+
+- thread A: insert_T(k,v); sync_key(k)
+- thread B: insert_T(k,v'); sync_key(k)
+
+Then the insert of v' may be synced by thread A's sync_key.
+
+
+Similarly, for [sync_all_keys]:
+
+- thread A: insert_T(k,v); sync_all_keys
+- thread B: insert_T(k,v')
+
+Thread A's call to sync_all_keys may result in (k,v') rather than (k,v).
+
+
+* Non-blocking design --------------------------------------------------
+
+We want sync operations to be non-blocking.
+
+- For the thread that issues the sync, blocking_mode=Continue means that we don't wait for the sync to complete
+
+- Transient operations from other threads should not block while a sync is taking place.
+
+- A concurrent sync_all_keys operation (perhaps occuring halfway through an existing sync) should avoid re-syncing keys that have already been synced.
+
+
+The design (for tjr_kv) has a single active thread servicing the pcache. If this thread is solely responsible for sync_all_keys, then transient operations will block (till the thread completes and can service another message from the LRU cache).
+
+Thus, the question is how to service the sync_all_keys operation in the pcache.
+
+FIXME another issue: how to suspend a thread in the LRU till we receive notification of the sync completion. For LWT we can just pass some mbox var. For the API perhaps we have a callback function which updates the system state.
+
+NOTE LMDB has "There can be multiple simultaneously active read-only transactions but only one that can write. Once a single read-write transaction is opened, all further attempts to begin one will block until the first one is committed or aborted."
+
+* Consumed API ---------------------------------------------------------
+
+The LRU provides a "syncable/blocking" map API.
+
+FIXME terminology: perhaps persistent_mode should be sync_mode? Or should we separate the sync operation from the durability and blocking requirement?
+
+FIXME sync is a bad word because it implies symmetrical operation, whereas a sync is really an operation at the API which forces changes downwards (flush has this connotation).
+
+We build it on top of an API which exposes map-like operations together with a sync operation. So the LRU is really just an LRU cache of a syncable map. 
+
+A non-blocking operation can put a msg on the queue and return immediately. A blocking operation has to listen for the reply before returning. There is a question of whether to implement a reply queue or use some simpler mechanism (callback or mbox var). Probably best to use a simple callback of type () -> 'a m
+
+
+* Marking entries clean ------------------------------------------------
+
+On a sync_all_keys call, we can dispatch to the lower layer, and mark all entries clean at that point, without waiting for the return. We only need to wait for the return if the sync_all_keys call is blocking (but we can still mark the entries clean... the blocking behaviour is a notification thing, but marking entries clean is just to record in memory that these entries no longer need to be flushed).
+
+
+*)
+
 (* we want to be able to take eg a map_ops and produce a cached
    version *)
 
@@ -211,6 +291,7 @@ let mark_all_clean ~cache_ops =
       let c' = mark_all_clean' c in
       (),c')
 
+(*
 (** [sync_all_keys] to the lower map. *)
 let sync_all_keys ~monad_ops ~map_ops ~cache_ops =
   let ( >>= ) = monad_ops.bind in
@@ -355,3 +436,4 @@ let make_cached_map ~monad_ops ~map_ops ~cache_ops =
     mk_map_ops ~find ~insert ~insert_many ~delete 
   in
   fun kk -> kk ~cached_map_ops ~evict_hook
+*)

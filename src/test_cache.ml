@@ -74,7 +74,7 @@ let cache_ops = {
   get=(fun () -> with_state (fun t -> (t.cache,t)));
   set=(fun cache -> with_state (fun t -> ((),{t with cache})))
 }
-
+(*
 let cached_map_ops = 
   Cache.make_cached_map ~monad_ops ~map_ops:base_map_ops ~cache_ops @@
   fun ~cached_map_ops ~evict_hook -> cached_map_ops
@@ -219,3 +219,4 @@ let _ = run (Cache_.insert 12 12)
 *)
 
 
+*)
