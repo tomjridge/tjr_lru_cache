@@ -3,9 +3,15 @@
 
 We assume all operations complete quickly. We allow values to be
    tagged with extra info (this will be used to record whether the
-   value needs to be flushed to the lower level).  
+   value needs to be flushed to the lower level).
 
-The difficulty is how to extend this to deal with disk-backed eviction.
+The difficulty is how to extend this to deal with disk-backed
+   eviction.
+
+NOTE that the operations occur not in a monad - instead, explicit
+   state passing is used, and we return the possible evictees; this is
+   a prelude to the real version where we need to do something with
+   the evictees
 
 *)
 
@@ -33,7 +39,6 @@ not to be present at lower (if
 type 'v op = Insert of 'v | Delete 
 
 type 'v entry = { value: 'v op; dirty:dirty; time:time }
-
 
 
 (* cache state ------------------------------------------------------ *)
@@ -69,9 +74,68 @@ type ('k,'v) cache_state = {
   queue: 'k Queue.t; (** map from time to key that was accessed at that time *)
 }
 
+
+(* res -------------------------------------------------------------- *)
+
+(** Each operation produces a value (possibly unit), an optional list of evictees, and an updated cache state *)
+type ('a,'k,'v) res = { ret_val: 'a; es: ('k*'v entry) list option; c:('k,'v)cache_state }
+
+
+
+
 (* cache state operations ------------------------------------------- *)
 
 (* We need to ensure the map and queue are coordinated *)
+
+let then_ f x = (if x=0 then f () else x)
+
+let compare c1 c2 =
+  Tjr_btree.Test.test(fun _ -> assert (c1.max_size = c2.max_size));
+  (Pervasives.compare c1.current_time c2.current_time) |> then_
+    (fun () -> Pervasives.compare 
+        (c1.cache_map |> Poly_map.bindings)
+        (c2.cache_map |> Poly_map.bindings)) |> then_
+    (fun () -> Pervasives.compare
+        (c1.queue |> Map_int.bindings)
+        (c2.queue |> Map_int.bindings))
+
+
+(** Cache wellformedness, check various invariants. 
+
+- the cache never has more than max_size elts 
+- the queue never has more than max_size elts 
+- all k in map are in the queue; iff
+- map and queue agree on timings
+
+*)
+let wf c =
+  Tjr_btree.Test.test @@ fun () -> 
+  assert (Poly_map.cardinal c.cache_map <= c.max_size);
+  assert (Queue.cardinal c.queue <= c.max_size);
+  assert (Poly_map.cardinal c.cache_map = Queue.cardinal c.queue);
+  Poly_map.iter (fun k entry -> assert(Queue.find entry.time c.queue = k)) c.cache_map;
+  ()
+  
+(** For testing, we typically need to normalize wrt. time *)
+let normalize c =
+  (* we need to map times to times *)
+  let t_map = ref Queue.empty in
+  let time = ref 0 in
+  let queue = ref Queue.empty in
+  Queue.iter
+    (fun t k -> 
+       let t' = (!time) in
+       t_map:=Map_int.add t t' (!t_map);
+       queue:=Queue.add t' k (!queue);
+       time:=!time+1;
+       ())
+    c.queue;
+  {c with
+   current_time=(!time);
+   cache_map=Poly_map.map (fun entry -> {entry with time = Map_int.find entry.time (!t_map)}) c.cache_map;
+   queue=(!queue) }
+
+
 
 
 (** Construct the initial cache using some relatively small values for
@@ -85,8 +149,7 @@ let mk_initial_cache ~compare_k = {
 }
 
 
-(** An exception, for quick abort. FIXME remove *)
-exception E_
+(* find_in_cache, get_evictees  --------------------------------- *)
 
 
 (* NOTE evictees are removed from the map, so no need to mark clean *)
@@ -115,6 +178,9 @@ let find_in_cache ~update_time (k:'k) (c:('k,'v)cache_state) =
 let _ = find_in_cache
 
 
+
+(** An exception, for quick abort. FIXME remove *)
+exception E_
 
 (** Returns None if no evictees need to be flushed, or Some(evictees)
    otherwise *)
@@ -150,21 +216,26 @@ let get_evictees (c:('k,'v)cache_state) =
 let _ = get_evictees
 
 
-(** Each operation produces a value (possibly unit), an optional list of evictees, and an updated cache state *)
-type ('a,'k,'v) res = { ret_val: 'a; es: ('k*'v entry) list option; c:('k,'v)cache_state }
-
 (** Construct the cached map on top of an existing map. *)
 (* FIXME we need to do something with the evictees *)
-let make_cached_map ~lower_find =
+
+(* FIXME lower_find should be in the monad *)
+
+open Tjr_monad.Monad
+
+let make_cached_map ~monad_ops ~(lower_find:'k -> ('v option,'t) Tjr_monad.Monad.m) =
+  let return = monad_ops.return in
+  let ( >>= ) = monad_ops.bind in
 
   (* NOTE that if find pulls an entry into the cache, we may have to
        get rid of evictees; so a read causes a write; but this should be
        relatively infrequent *)
-  let find (k:'k) c : ('v op,'k,'v) res = 
+  let find (k:'k) c : (('v op,'k,'v) res,'t) m = 
+    return () >>= fun _ -> 
     find_in_cache ~update_time:true k c |> fun (v,c) -> 
     match v with
     | None -> 
-      lower_find k c |> fun (v,c) -> 
+      lower_find k >>= fun vopt -> 
       let c = tick c in
       (* need to update map before returning *)
       (* FIXME concurrency concerns: v may be stale *)
@@ -173,8 +244,9 @@ let make_cached_map ~lower_find =
           queue=c.queue |> Queue.add c.current_time k}) |> fun (v,c) ->
       (* also may need to evict *)
       get_evictees c |> fun (es,c) ->
-      { ret_val=v; es; c}
-    | Some e -> {ret_val=e.value;es=None;c}
+      { ret_val=v; es; c} 
+      |> return
+    | Some e -> return {ret_val=e.value;es=None;c}
   in
 
   let _ = find in
@@ -212,6 +284,6 @@ let make_cached_map ~lower_find =
 
 
 
-
+let _ = make_cached_map
 
 (* FIXME Test *)

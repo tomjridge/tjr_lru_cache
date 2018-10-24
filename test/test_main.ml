@@ -17,7 +17,7 @@ let main () =
   match Array.to_list Sys.argv |> List.tl with
   | [l;h] -> 
       let [l;h] = List.map int_of_string [l;h] in
-      Test_cache.test (l--h) 
+      Test_in_mem.test (l--h) 
   | _ -> failwith __LOC__
 [@@warning "-8"]
 
