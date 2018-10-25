@@ -79,7 +79,7 @@ let merge_evictees_with_base_map (es:(key*value entry)list option) m =
   match es with
   | None -> m
   | Some es -> 
-    Printf.printf "Merging evictees...";
+    (* Printf.printf "Merging evictees..."; *)
     Tjr_list.with_each_elt
       ~list:es
       ~step:(fun ~state (k,e) ->

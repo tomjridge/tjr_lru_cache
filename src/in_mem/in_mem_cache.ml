@@ -125,8 +125,10 @@ let compare c1 c2 =
 
 *)
 let wf c =
-  (fun f -> f ()) @@ fun () -> 
-  assert (Poly_map.cardinal c.cache_map <= c.max_size);
+  test @@ fun () -> 
+  assert (
+    (* Printf.printf "wf: %d %d\n" (Poly_map.cardinal c.cache_map) c.max_size; *)
+    Poly_map.cardinal c.cache_map <= c.max_size);
   assert (Queue.cardinal c.queue <= c.max_size);
   assert (Poly_map.cardinal c.cache_map = Queue.cardinal c.queue);
   Poly_map.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
@@ -226,7 +228,7 @@ let get_evictees (c:('k,'v)cache_state) =
       with E_ -> ()
     end;
     (* now we have evictees, new queue, and new map *)
-    let c' = {c with cache_map=(!cache_map); queue=(!queue)} in
+    let c = {c with cache_map=(!cache_map); queue=(!queue)} in
     (Some (!evictees),c)
     
 let _ = get_evictees
@@ -257,7 +259,7 @@ let make_cached_map () =
             cache_map=Poly_map.add k 
                 {entry_type=new_entry; atime=c.current_time} 
                 c.cache_map;
-            queue=c.queue |> Queue.add c.current_time k } |> fun c ->              
+            queue=c.queue |> Queue.add c.current_time k } |> fun c ->
           (* also may need to evict *)
           get_evictees c |> fun (es,c) ->
           (vopt_from_lower,`Evictees es, `Cache_state c))
