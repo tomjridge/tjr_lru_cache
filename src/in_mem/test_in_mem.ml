@@ -1,7 +1,7 @@
 (* testing in mem cache ---------------------------------------- *)
 
-open Tjr_btree
-open Base_types
+(* open Tjr_btree *)
+(* open Base_types *)
 open In_mem_cache
 
 module Cache = In_mem_cache
@@ -45,7 +45,7 @@ end
 
 open Test_state
 
-let init_cache = Cache.mk_initial_cache ~compare_k:Int_.compare |> Cache.normalize
+let init_cache = Cache.mk_initial_cache ~compare_k:Tjr_btree.Base_types.Int_.compare |> Cache.normalize
 
 let init_base_map = Map_int.empty
 
@@ -79,6 +79,7 @@ let merge_evictees_with_base_map (es:(key*value entry)list option) m =
   match es with
   | None -> m
   | Some es -> 
+    Printf.printf "Merging evictees...";
     Tjr_list.with_each_elt
       ~list:es
       ~step:(fun ~state (k,e) ->
@@ -156,7 +157,7 @@ let step t op =
    we already check internal invariants of course
 *)
 
-let check_state x = () (* FIXME TODO *)
+let check_state x = (wf x.cache) (* FIXME TODO *)
 let check_step x op y = () (* FIXME TODO *)
 
 let test_ops = { step; check_state; check_step }

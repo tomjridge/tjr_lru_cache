@@ -15,6 +15,8 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 *)
 
+let test f = f ()
+
 (** The cache maintains an internal clock. *)
 type time = int
 
@@ -104,7 +106,7 @@ type ('a,'k,'v) res = { ret_val: 'a; es: ('k*'v entry) list option; c:('k,'v)cac
 let then_ f x = (if x=0 then f () else x)
 
 let compare c1 c2 =
-  Tjr_btree.Test.test(fun _ -> assert (c1.max_size = c2.max_size));
+  test(fun _ -> assert (c1.max_size = c2.max_size));
   (Pervasives.compare c1.current_time c2.current_time) |> then_
     (fun () -> Pervasives.compare 
         (c1.cache_map |> Poly_map.bindings)
@@ -123,7 +125,7 @@ let compare c1 c2 =
 
 *)
 let wf c =
-  Tjr_btree.Test.test @@ fun () -> 
+  (fun f -> f ()) @@ fun () -> 
   assert (Poly_map.cardinal c.cache_map <= c.max_size);
   assert (Queue.cardinal c.queue <= c.max_size);
   assert (Poly_map.cardinal c.cache_map = Queue.cardinal c.queue);
@@ -155,8 +157,8 @@ let normalize c =
 (** Construct the initial cache using some relatively small values for
    [max_size] etc. *)
 let mk_initial_cache ~compare_k = {
-  max_size=8;
-  evict_count=4;
+  max_size=4;
+  evict_count=2;
   current_time=0;
   cache_map=((Poly_map.empty compare_k):('k,'v)Poly_map.t);
   queue=Queue.empty
