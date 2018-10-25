@@ -29,16 +29,30 @@ module Queue = Map_int
 
 (** Cache map entries; values in the map are tagged with a last-accessed time and a dirty flag
 
-Description of the value option and dirty flag: [None] indicates known 
-not to be present at lower (if
-[dirty=false]), or has been deleted (if [dirty=true]); [Some v] with
-[dirty=true] indicates that this needs to be flushed to lower map. 
+Entries in the cache for key k:
+
+- Insert v (dirty=true/false)
+  - this occurs on insert
+- Delete   (dirty=true/false)
+- Lower vopt 
+  - this occurs when we check the lower layer for a non-existing entry in cache
+- (No entry)
+  - for a key that hasn't been seen before
+
+Additionally, each entry has a last-accessed time
+
+
 
  *)
 
-type 'v op = Insert of 'v | Delete 
+type 'v entry_type = 
+  | Insert of { value: 'v; dirty:dirty }
+  | Delete of { dirty:dirty }
+  | Lower of 'v option
 
-type 'v entry = { value: 'v op; dirty:dirty; time:time }
+let is_Lower = function Lower _ -> true | _ -> false 
+
+type 'v entry = { entry_type: 'v entry_type; atime: time }
 
 
 (* cache state ------------------------------------------------------ *)
@@ -113,7 +127,7 @@ let wf c =
   assert (Poly_map.cardinal c.cache_map <= c.max_size);
   assert (Queue.cardinal c.queue <= c.max_size);
   assert (Poly_map.cardinal c.cache_map = Queue.cardinal c.queue);
-  Poly_map.iter (fun k entry -> assert(Queue.find entry.time c.queue = k)) c.cache_map;
+  Poly_map.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
   ()
   
 (** For testing, we typically need to normalize wrt. time *)
@@ -132,7 +146,7 @@ let normalize c =
     c.queue;
   {c with
    current_time=(!time);
-   cache_map=Poly_map.map (fun entry -> {entry with time = Map_int.find entry.time (!t_map)}) c.cache_map;
+   cache_map=Poly_map.map (fun entry -> {entry with atime = Map_int.find entry.atime (!t_map)}) c.cache_map;
    queue=(!queue) }
 
 
@@ -165,8 +179,8 @@ let find_in_cache ~update_time (k:'k) (c:('k,'v)cache_state) =
     let c = 
       if update_time then
         {c with 
-         cache_map=Poly_map.add k {e with time=c.current_time} c.cache_map;
-         queue=c.queue |> Queue.remove e.time |> Queue.add c.current_time k}
+         cache_map=Poly_map.add k {e with atime=c.current_time} c.cache_map;
+         queue=c.queue |> Queue.remove e.atime |> Queue.add c.current_time k}
       else 
         c
     in
@@ -221,44 +235,49 @@ let _ = get_evictees
 
 (* FIXME lower_find should be in the monad *)
 
-open Tjr_monad.Monad
+(* open Tjr_monad.Monad *)
 
-let make_cached_map ~monad_ops ~(lower_find:'k -> ('v option,'t) Tjr_monad.Monad.m) =
-  let return = monad_ops.return in
-  let ( >>= ) = monad_ops.bind in
+let make_cached_map =
 
   (* NOTE that if find pulls an entry into the cache, we may have to
        get rid of evictees; so a read causes a write; but this should be
        relatively infrequent *)
-  let find (k:'k) c : (('v op,'k,'v) res,'t) m = 
-    return () >>= fun _ -> 
+  let find (k:'k) c = 
     find_in_cache ~update_time:true k c |> fun (v,c) -> 
     match v with
     | None -> 
-      lower_find k >>= fun vopt -> 
-      let c = tick c in
-      (* need to update map before returning *)
-      (* FIXME concurrency concerns: v may be stale *)
-      (v,{c with
-          cache_map=Poly_map.add k {value=v; time=c.current_time; dirty=false} c.cache_map;
-          queue=c.queue |> Queue.add c.current_time k}) |> fun (v,c) ->
-      (* also may need to evict *)
-      get_evictees c |> fun (es,c) ->
-      { ret_val=v; es; c} 
-      |> return
-    | Some e -> return {ret_val=e.value;es=None;c}
+      `Not_in_cache (fun ~vopt_from_lower ->          
+          let c = tick c in
+          (* need to update map before returning *)
+          (* FIXME concurrency concerns: v may be stale if we get from lower, but cache updated in meantime *)
+          let new_entry = Lower vopt_from_lower in
+          { c with
+            cache_map=Poly_map.add k 
+                {entry_type=new_entry; atime=c.current_time} 
+                c.cache_map;
+            queue=c.queue |> Queue.add c.current_time k } |> fun c ->              
+          (* also may need to evict *)
+          get_evictees c |> fun (es,c) ->
+          (vopt_from_lower,`Evictees es, `Cache_state c))
+    | Some v -> 
+      `In_cache v
   in
 
   let _ = find in
 
-  let perform k op c = 
+
+  (* FIXME TODO we need to also handle the cases where we flush to lower immediately *)
+
+  (* NOTE entry_type is not Lower *)
+  let perform k entry_type c = 
+    assert(not (is_Lower entry_type));
     let c = tick c in
     let e = 
       try 
         Some (Poly_map.find k c.cache_map)
       with Not_found -> None 
     in
-    let e' = { value=op; time=c.current_time; dirty=true } in
+    let e' = {entry_type; atime=c.current_time } in
     (* new entry in cache_map *)
     let c = {c with cache_map=(Poly_map.add k e' c.cache_map) } in
     (* maybe remove existing entry from queue *)
@@ -266,20 +285,20 @@ let make_cached_map ~monad_ops ~(lower_find:'k -> ('v option,'t) Tjr_monad.Monad
       match e with
       | None -> c
       | Some e -> 
-        {c with queue=(Queue.remove e.time c.queue) } 
+        {c with queue=(Queue.remove e.atime c.queue) } 
     in
     (* add new entry *)
-    let c = {c with queue=(Queue.add e'.time k c.queue) } in
+    let c = {c with queue=(Queue.add e'.atime k c.queue) } in
     get_evictees c |> fun (es,c) -> 
-    { ret_val=(); es; c }
+    (`Evictees es, `Cache_state c)
   in
 
-  let insert k v c = perform k (Insert v) c in
+  let insert k v c = perform k (Insert {value=v; dirty=true }) c in
 
   (* TODO make insert_many more efficient *)
   (* let insert_many k v kvs c = insert k v c |> fun c -> (kvs,c) in *)
 
-  let delete k c = perform k Delete c in
+  let delete k c = perform k (Delete {dirty=true}) c in
   fun kk -> kk ~find ~insert ~delete
 
 

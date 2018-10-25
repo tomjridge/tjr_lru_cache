@@ -52,6 +52,7 @@ let initial_state = { spec=init_spec; cache=init_cache; base_map=init_base_map }
 
 
 (* base uncached map ------------------------------------------------ *)
+
 open Tjr_monad
 
 let monad_ops : t state_passing monad_ops = Tjr_monad.State_passing_instance.monad_ops () 
@@ -73,9 +74,10 @@ let base_map_ops : ('k,'v,'t) map_ops =
   mk_map_ops ~find ~insert ~delete ~insert_many
 *)
 
+(*
 let base_find k = fun t -> 
   let op = Map_int.find k t in
-  
+*)  
   
 
 (* cached map ------------------------------------------------------- *)
@@ -86,8 +88,8 @@ let cache_ops = {
 }
 
 let cached_map_ops = 
-  Cache.make_cached_map ~lower_find:base_map_ops.find
-  fun ~cached_map_ops ~evict_hook -> cached_map_ops
+  Cache.make_cached_map ~lower_find:base_map_ops.find @@
+  fun ~cached_map_ops ~evict_hook -> cached_map_ops 
 
 let _ = cached_map_ops
 
@@ -229,4 +231,3 @@ let _ = run (Cache_.insert 12 12)
 *)
 
 
-*)
