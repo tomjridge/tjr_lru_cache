@@ -92,7 +92,11 @@ let merge_evictees_with_base_map (es:(key*value entry)list option) m =
 
 let find k t = 
   find k t.cache |> function
-  | `In_cache e -> failwith "FIXME"
+  | `In_cache e -> (
+      match e.entry_type with
+      | Insert {value; dirty } -> (Some value,t)
+      | Delete _ -> (None,t)
+      | Lower vopt -> (vopt,t))
   | `Not_in_cache kk -> 
     let vopt_from_lower = Map_int.find_opt k t.base_map in
     kk ~vopt_from_lower |> fun (vopt,`Evictees es, `Cache_state cache) ->
