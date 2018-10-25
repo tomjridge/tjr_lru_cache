@@ -237,7 +237,7 @@ let _ = get_evictees
 
 (* open Tjr_monad.Monad *)
 
-let make_cached_map =
+let make_cached_map () =
 
   (* NOTE that if find pulls an entry into the cache, we may have to
        get rid of evictees; so a read causes a write; but this should be

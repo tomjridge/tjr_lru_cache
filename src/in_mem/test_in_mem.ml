@@ -3,7 +3,6 @@
 open Tjr_btree
 open Base_types
 open In_mem_cache
-open Map_ops
 
 module Cache = In_mem_cache
 
@@ -21,8 +20,12 @@ type op = Find of key | Insert of key * value | Delete of key
 
 module Test_state = struct 
 
+  
+  (* the spec state is the combined view of the cache and the base map ? *)
+  type spec_state = int Map_int.t
+
   type t = {
-    spec: int Map_int.t;
+    spec: spec_state;
     cache: (key,value)cache_state;
     base_map: int Map_int.t;
   }
@@ -53,49 +56,62 @@ let initial_state = { spec=init_spec; cache=init_cache; base_map=init_base_map }
 
 (* base uncached map ------------------------------------------------ *)
 
-open Tjr_monad
-
-let monad_ops : t state_passing monad_ops = Tjr_monad.State_passing_instance.monad_ops () 
-let with_state = Tjr_monad.State_passing_instance.with_world
-
-(* FIXME why is find defined in the following, but others are not?
-   because the cache only needs find from the lower layer - evictees
-   are handled elsewhere? *)
-(*
-let base_map_ops : ('k,'v,'t) map_ops = 
-  let find k =
-    fun t -> 
-    let v = try Some(Map_int.find k t.base_map) with _ -> None in
-    (v,t)
-  in
-  let insert k v = failwith __LOC__ in
-  let insert_many k v kvs = failwith __LOC__ in
-  let delete k = failwith __LOC__ in
-  mk_map_ops ~find ~insert ~delete ~insert_many
-*)
-
-(*
-let base_find k = fun t -> 
-  let op = Map_int.find k t in
-*)  
+(* just return the value option *)
+let base_find_opt k = fun t -> 
+  Map_int.find_opt k t
   
 
-(* cached map ------------------------------------------------------- *)
-
-let cache_ops = {
-  get=(fun () -> with_state (fun t -> (t.cache,t)));
-  set=(fun cache -> with_state (fun t -> ((),{t with cache})))
-}
-
-let cached_map_ops = 
-  Cache.make_cached_map ~lower_find:base_map_ops.find @@
-  fun ~cached_map_ops ~evict_hook -> cached_map_ops 
-
-let _ = cached_map_ops
-
 let (find,insert,delete) = 
-  dest_map_ops cached_map_ops @@ fun ~find ~insert ~delete ~insert_many ->
-  (find,insert,delete)
+  Cache.make_cached_map () @@
+  fun ~find ~insert ~delete -> (find,insert,delete)
+
+(* we modify find so that it utilises the base map *)
+
+let _ = find
+
+let _ = insert
+
+(* for all operations, we need to work out what to do with the
+   evictees; here we simply flush to lower FIXME might be best to
+   phrase this all in a monad *)
+
+let merge_evictees_with_base_map (es:(key*value entry)list option) m =
+  match es with
+  | None -> m
+  | Some es -> 
+    Tjr_list.with_each_elt
+      ~list:es
+      ~step:(fun ~state (k,e) ->
+          match e.entry_type with
+          | Insert { value; dirty=true } -> Map_int.add k value state
+          | Insert { value; dirty=false } -> state 
+          | Delete { dirty=true } -> Map_int.remove k state
+          | Delete { dirty=false } -> state
+          | Lower vopt -> state)
+      ~init:m
+
+let find k t = 
+  find k t.cache |> function
+  | `In_cache e -> failwith "FIXME"
+  | `Not_in_cache kk -> 
+    let vopt_from_lower = Map_int.find_opt k t.base_map in
+    kk ~vopt_from_lower |> fun (vopt,`Evictees es, `Cache_state cache) ->
+    (* need to do something with evictees, and return the vopt and
+       updated test state *)
+    (vopt, { t with cache=cache; base_map=merge_evictees_with_base_map es t.base_map })
+
+
+let insert,delete =
+  let update t = fun (`Evictees es, `Cache_state cache) ->
+    { t with cache; base_map=merge_evictees_with_base_map es t.base_map }
+  in
+  let insert k v t = insert k v t.cache |> update t in
+  let delete k t = delete k t.cache |> update t in
+  insert,delete
+
+let _ : key -> t -> value option * t = find
+let _ : key -> value -> t -> t = insert
+let _ : key -> t -> t = delete
 
 
 (* exhaustive testing ----------------------------------------------- *)
@@ -104,21 +120,16 @@ let (find,insert,delete) =
 
 open Tjr_exhaustive_testing
 
-let run ~init_state a = 
-  Tjr_monad.State_passing_instance.run ~init_state a |> fun (x,y) -> (y,x)
-
 let step t op =
   begin
     match op with
-    | Find k -> find k |> run ~init_state:t |> (fun (t',_) -> t')
+    | Find k -> find k t |> fun (_,t') -> t'
     | Insert (k,v) -> 
-      insert k v 
-      |> run ~init_state:t
-      |> (fun (t',_) -> {t' with spec=Map_int.add k v t'.spec})
-    | Delete k -> 
-      delete k
-      |> run ~init_state:t
-      |> (fun (t',_) -> {t' with spec=Map_int.remove k t'.spec})
+      insert k v t
+      |> (fun t' -> {t' with spec=Map_int.add k v t'.spec})
+    | Delete k ->
+      delete k t
+      |> (fun t'-> {t' with spec=Map_int.remove k t'.spec})
   end                   
   |> (fun x -> [{ x with cache=Cache.normalize x.cache}])
 
