@@ -135,7 +135,7 @@ module Types = struct
      transactional operations, it seems strange to limit the
      functionality here. *)
   type ('k,'v,'t) flushable_map_ops = {
-    find: 'k -> ('v option,'t) m;
+    find: 'k -> ('v option,'t) m;  (** NOTE all calls are blocking *)
     insert: mode -> 'k -> 'v -> (unit,'t) m;
     delete: mode -> 'k -> (unit,'t) m;
     sync_key: 'k -> (unit,'t) m;

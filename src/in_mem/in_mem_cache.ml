@@ -1,9 +1,13 @@
 (** A single-threaded in-memory LRU cache, as a prelude to the real
    thing.
 
-We assume all operations complete quickly. We allow values to be
-   tagged with extra info (this will be used to record whether the
-   value needs to be flushed to the lower level).
+We assume all operations complete quickly from the cache. Operations
+   that need to go to disk are modelled using explicit continuation
+   passing.
+
+We allow values to be tagged with extra info (this will be used to
+   record whether the value needs to be flushed to the lower
+   level). ?FIXME
 
 The difficulty is how to extend this to deal with disk-backed
    eviction.
@@ -15,6 +19,7 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 *)
 
+(** FIXME tests are enabled; disable for production *)
 let test f = f ()
 
 (** The cache maintains an internal clock. *)
@@ -34,16 +39,14 @@ module Queue = Map_int
 Entries in the cache for key k:
 
 - Insert v (dirty=true/false)
-  - this occurs on insert
+    {ul {li this occurs on insert}}
 - Delete   (dirty=true/false)
 - Lower vopt 
-  - this occurs when we check the lower layer for a non-existing entry in cache
+    {ul {li this occurs when we check the lower layer for a non-existing entry in cache}}
 - (No entry)
-  - for a key that hasn't been seen before
+    {ul {li for a key that hasn't been seen before}}
 
 Additionally, each entry has a last-accessed time
-
-
 
  *)
 
@@ -91,11 +94,12 @@ type ('k,'v) cache_state = {
 }
 
 
+(*
 (* res -------------------------------------------------------------- *)
 
 (** Each operation produces a value (possibly unit), an optional list of evictees, and an updated cache state *)
 type ('a,'k,'v) res = { ret_val: 'a; es: ('k*'v entry) list option; c:('k,'v)cache_state }
-
+*)
 
 
 
@@ -234,13 +238,18 @@ let get_evictees (c:('k,'v)cache_state) =
 let _ = get_evictees
 
 
-(** Construct the cached map on top of an existing map. *)
-(* FIXME we need to do something with the evictees *)
+(** Construct the cached map on top of an existing map.
 
-(* FIXME lower_find should be in the monad *)
+NOTE the idea for [find] is that we execute a quick step to handle the
+   case that there is an entry in the cache. If there isn't, we make a
+   slow call to the lower layer, and when the result arrives we make
+   another update to the cache state with the then current state of
+   the cache. To avoid the risk of stale results being returned from
+   lower, we have to tag lower results with some kind of
+   monotonically-increasing index.
 
-(* open Tjr_monad.Monad *)
 
+*)
 let make_cached_map () =
 
   (* NOTE that if find pulls an entry into the cache, we may have to
@@ -308,5 +317,3 @@ let make_cached_map () =
 
 
 let _ = make_cached_map
-
-(* FIXME Test *)
