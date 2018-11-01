@@ -259,7 +259,8 @@ let make_cached_map () =
     find_in_cache ~update_time:true k c |> fun (v,c) -> 
     match v with
     | None -> 
-      `Not_in_cache (fun ~vopt_from_lower ->          
+      `Not_in_cache (fun ~vopt_from_lower ~cache_state ->          
+          let c = cache_state in
           let c = tick c in
           (* need to update map before returning *)
           (* FIXME concurrency concerns: v may be stale if we get from lower, but cache updated in meantime *)

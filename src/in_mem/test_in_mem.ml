@@ -100,7 +100,7 @@ let find k t =
       | Lower vopt -> (vopt,t))
   | `Not_in_cache kk -> 
     let vopt_from_lower = Map_int.find_opt k t.base_map in
-    kk ~vopt_from_lower |> fun (vopt,`Evictees es, `Cache_state cache) ->
+    kk ~vopt_from_lower ~cache_state:t.cache |> fun (vopt,`Evictees es, `Cache_state cache) ->
     (* need to do something with evictees, and return the vopt and
        updated test state *)
     (vopt, { t with cache=cache; base_map=merge_evictees_with_base_map es t.base_map })

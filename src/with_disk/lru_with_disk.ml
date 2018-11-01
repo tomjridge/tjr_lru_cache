@@ -21,13 +21,11 @@ In order to serialize the updates to the cache state, we add a
 
 (** TODO:
 
-- add "current lower time" tag to lower_find in in-mem code
+- move to a version of the code where the lru is wrapped to allow
+   multithreaded access; the first thread that finds a missing entry
+   for key k gets to call the pcache; when the result is known, all
+   threads waiting on k are activated
 
-- update in-mem find to return a continuation that again takes the
-   cache state
-
-- update the find code to take account of the "current lower time"
-   that is returned by lower_find
 
 - implement sync_key and sync_all_keys for in-mem interface; these
    need to update the cache state as well of course (to mark all
@@ -35,7 +33,11 @@ In order to serialize the updates to the cache state, we add a
 
 - evictees may arise from the in-mem operation; however, no-one is
    waiting on these; so we just call the pcache to write evictees to
-   disk
+   disk; if we do not have an active pcache thread, this may block the
+   pcache for a long period of time; is there a strategy to sync the
+   evictees that doesn't block the pcache? could maintain an in-mem
+   evictees map that is gradually pushed to disk whilst other requests
+   are served;
 
 - for LRU persist-now mode: we use "handle_ops_in_pcache(ops)" from
    the LRU; this is implemented by placing the ops on the pcache
@@ -74,6 +76,8 @@ type ('k,'v,'t) pcache_ops = {
   (** blocks; make sure these operations are serialized to pcache *)
 }
 
+(*
 let in_mem_cache_ops = In_mem_cache.make_cached_map()
 
 let _ = in_mem_cache_ops
+*)
