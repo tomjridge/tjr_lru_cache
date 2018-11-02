@@ -34,10 +34,10 @@ In order to serialize the updates to the cache state, we add a
 - evictees may arise from the in-mem operation; however, no-one is
    waiting on these; so we just call the pcache to write evictees to
    disk; if we do not have an active pcache thread, this may block the
-   pcache for a long period of time; is there a strategy to sync the
-   evictees that doesn't block the pcache? could maintain an in-mem
-   evictees map that is gradually pushed to disk whilst other requests
-   are served;
+   pcache; is there a strategy to sync the evictees that doesn't block
+   the pcache? could maintain an in-mem evictees map that is gradually
+   pushed to disk whilst other requests are served;
+    - on the other hand, we expect that the pcache can flush evictees to disk in 1 block write
 
 - for LRU persist-now mode: we use "handle_ops_in_pcache(ops)" from
    the LRU; this is implemented by placing the ops on the pcache
@@ -45,6 +45,8 @@ In order to serialize the updates to the cache state, we add a
    callback when the ops have been persisted. Why not just lock the
    pcache and execute the write? It may be that we want to prioritize
    non-evictee updates in the pcache
+    - but this sounds like a bit of a premature optimization
+    - so just serialize operations on pcache
 
 - for in-mem, when we return with cache_state and evictees, we aim to
    unblock the cache state ASAP; but can we do this without ensuring
@@ -53,6 +55,11 @@ In order to serialize the updates to the cache state, we add a
    evictees are taken into account when accessing the lower layer. The
    implementation of this is somewhat complicated. So a first version
    should just block until the evictees are known to be on disk.
+
+- in order to handle evictees quickly, pcache should pre-allocate
+   blocks (so we don't need toupdate the free map); perhaps each block
+   should then be written with a next pointer if possible (even if not
+   full)
 
 *)
 
@@ -63,14 +70,19 @@ In order to serialize the updates to the cache state, we add a
 open Tjr_monad.Monad
 open In_mem_cache
 
+
+(* FIXME pcache doesn't have sync etc, but does have flush_evictees *)
 type ('k,'v,'t) pcache_ops = {
   find: 'k -> ('v option,'t) m;
   
   insert_now: 'k -> 'v -> (unit,'t) m;  (* use sync_key implementation *)
   delete_now: 'k -> (unit,'t) m;  (* ditto *)
 
+(*
   sync_key: 'k -> 'v entry_type -> (unit,'t) m;
   sync_keys: ('k * 'v entry) list -> (unit,'t) m;  (* can use flush_evictees implementation *)
+*)
+
 
   flush_evictees: ('k * 'v entry) list -> (unit, 't) m;  
   (** blocks; make sure these operations are serialized to pcache *)

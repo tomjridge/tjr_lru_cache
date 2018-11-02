@@ -94,6 +94,34 @@ type ('k,'v) cache_state = {
 }
 
 
+
+(* ops type --------------------------------------------------------- *)
+
+module Lru_in_mem_ops = struct
+
+  (** This type is what is returned by the [make_lru_in_mem] function *)
+  type ('k,'v,'t) lru_in_mem_ops = {
+    find: 'k -> ('k,'v) cache_state -> 
+      [ `In_cache of 'v entry
+      | `Not_in_cache of
+           vopt_from_lower:'v option ->
+           cache_state:('k, 'v) cache_state ->
+           'v option * 
+           [ `Evictees of ('k * 'v entry) list option ] *
+           [ `Cache_state of ('k, 'v) cache_state ] ];
+
+    insert: 'k -> 'v -> ('k,'v) cache_state ->
+      [ `Evictees of ('k * 'v entry) list option ] *
+      [ `Cache_state of ('k, 'v) cache_state ];
+
+    delete: 'k -> ('k, 'v) cache_state ->
+      [ `Evictees of ('k * 'v entry) list option ] *
+      [ `Cache_state of ('k, 'v) cache_state ]
+  }
+end
+
+
+
 (*
 (* res -------------------------------------------------------------- *)
 
@@ -318,3 +346,11 @@ let make_cached_map () =
 
 
 let _ = make_cached_map
+
+
+include Lru_in_mem_ops
+
+let make_lru_in_mem () = 
+  make_cached_map () @@ fun ~find ~insert ~delete -> 
+  let open Lru_in_mem_ops in
+  { find; insert; delete }
