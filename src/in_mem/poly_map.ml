@@ -23,6 +23,10 @@ let cardinal: ('k,'v) t -> int = (fun m ->
     !x)
 let iter: ('k -> 'v -> unit) -> ('k,'v) t -> unit = PMap.iter
 let find: 'k -> ('k,'v) t -> 'v = PMap.find
+let find_opt: 'k -> ('k,'v) t -> 'v option = fun k t -> 
+  try 
+    Some(find k t)
+  with Not_found -> None
 let remove: 'k -> ('k,'v) t -> ('k,'v) t = PMap.remove
 let add: 'k -> 'v -> ('k,'v) t -> ('k,'v) t = PMap.add
 let foldi: ('a -> 'b -> 'c -> 'c) -> ('a , 'b) t -> 'c -> 'c = PMap.foldi
