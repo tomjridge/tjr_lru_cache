@@ -116,34 +116,32 @@ memory that these entries no longer need to be flushed).
 
 open Tjr_monad.Monad
 
-module Types = struct
-  (** A calling mode can be "later" (ie, perform immediately in mem
-     and return; persist sometime later) or "now", in which case we
-     can optionally supply a callback. A call can be blocking or
-     non-blocking. For non-blocking, the calling thread is expected to
-     launch an async promise that resolves without blocking the
-     caller. Thus, we implement only blocking versions of calls. *)
+(** A calling mode can be "later" (ie, perform immediately in mem
+    and return; persist sometime later) or "now", in which case we
+    can optionally supply a callback. A call can be blocking or
+    non-blocking. For non-blocking, the calling thread is expected to
+    launch an async promise that resolves without blocking the
+    caller. Thus, we implement only blocking versions of calls. *)
 
-  type persist_mode = Persist_later | Persist_now
+type persist_mode = Persist_later | Persist_now
 
-  type mode = persist_mode
+type mode = persist_mode
 
-  (* FIXME this interface doesn't allow "transaction" operations
-     (multiple ops, which commit atomically). This is sufficient for
-     ImpFS - the kv store is pointwise syncable not
-     transactional. However, since the lower level does support
-     transactional operations, it seems strange to limit the
-     functionality here. *)
-  type ('k,'v,'t) flushable_map_ops = {
-    find: 'k -> ('v option,'t) m;  (** NOTE all calls are blocking *)
-    insert: mode -> 'k -> 'v -> (unit,'t) m;
-    delete: mode -> 'k -> (unit,'t) m;
-    sync_key: 'k -> (unit,'t) m;
-    sync_all_keys: unit -> (unit,'t) m;
-  }
-end
+(* FIXME this interface doesn't allow "transaction" operations
+   (multiple ops, which commit atomically). This is sufficient for
+   ImpFS - the kv store is pointwise syncable not
+   transactional. However, since the lower level does support
+   transactional operations, it seems strange to limit the
+   functionality here. *)
+type ('k,'v,'t) lru_ops = {
+  find: 'k -> ('v option,'t) m;  (** NOTE all calls are blocking *)
+  insert: mode -> 'k -> 'v -> (unit,'t) m;
+  delete: mode -> 'k -> (unit,'t) m;
+  sync_key: 'k -> (unit,'t) m;
+  sync_all_keys: unit -> (unit,'t) m;
+}
 
-include Types
+
 
 (** We also need to put operations on a queue, to be processed by the pcache. *)
 module Concrete_representation = struct
@@ -172,19 +170,4 @@ module Concrete_representation = struct
   (* NOTE a problem with this approach is that the 'a is different for
      every caller; this is why we use GADTs to eliminate the 'a tyvar
      *)
-end
-
-(** The interface we consume; an uncached KV store *)
-module Consumed_api = struct
-
-  type ('k,'v) op = Insert of 'k * 'v | Delete of 'k
-  
-  (** NOTE the following are all blocking *)
-  type ('k,'v,'t) uncached_ops = {
-    find: 'k -> ('v option, 't) m;
-    insert: 'k -> 'v -> (unit,'t) m;
-    delete: 'k -> (unit,'t) m;
-    batch: ('k,'v) op list -> (unit,'t) m;
-  }
-  
 end
