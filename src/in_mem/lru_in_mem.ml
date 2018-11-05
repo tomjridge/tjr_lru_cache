@@ -335,13 +335,18 @@ let make_cached_map () =
     (`Evictees es, `Cache_state c)
   in
 
-  let insert k v c = perform k (Insert {value=v; dirty=true }) c in
+  let insert k v dirty c = perform k (Insert {value=v; dirty }) c in
+
+  let insert_now k v c = perform k (Insert {value=v; dirty=false }) c in
 
   (* TODO make insert_many more efficient *)
   (* let insert_many k v kvs c = insert k v c |> fun c -> (kvs,c) in *)
 
-  let delete k c = perform k (Delete {dirty=true}) c in
-  fun kk -> kk ~find ~insert ~delete
+  let delete k dirty c = perform k (Delete {dirty}) c in
+
+  let delete_now k c = perform k (Delete {dirty=false}) c in
+
+  fun kk -> kk ~find ~insert ~insert_now ~delete ~delete_now
 
 
 

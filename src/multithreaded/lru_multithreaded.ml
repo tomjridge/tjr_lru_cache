@@ -62,9 +62,9 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
 - a map from k to a wait list (of threads that are waiting for a find
    operation to complete at the disk layer)
 
-- a queue of messages (most recent first) to the lower land
+- a queue of messages (most recent first) to the lower level
 
-The lower "disk" layer is defined in {!module: Pcache_interface}.
+The lower "disk" layer is defined in {!module: Pcache_interface}. FIXME?
 
 NOTE Access to the lower layer is serialized. Messages are added to
    [to_lower] in order. There is another thread which takes messages
@@ -84,7 +84,7 @@ type ('msg,'k,'v,'t) lru_state = {
    re-implementation of a concurrency staple (eg Lwt tasks); the
    implementation here is explicit because we may want to verify the
    implementation using the local state [blocked_threads] (rather than
-   some generic version provided by the monad *)
+   some generic version provided by the monad) *)
 let add_callback_on_key ~callback ~k ~lru = 
   match Poly_map.find_opt k lru.blocked_threads with
   | Some xs -> 
@@ -144,7 +144,7 @@ For sync_key (and sync_keys) we simply take the entry in the cache (if
 any) and mark it clean and flush to lower.
 
 *)
-let make_lru_ops ~monad_ops ~with_lru ~async =
+let make_lru_ops' ~monad_ops ~with_lru ~async =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let process_callbacks_for_key = process_callbacks_for_key ~monad_ops ~async in
@@ -170,7 +170,7 @@ let make_lru_ops ~monad_ops ~with_lru ~async =
             | `Need_to_call_lower -> 
               (* we want to issue a `Find k call to lower, with a
                  callback that unblocks the waiting threads *)
-              let callback = fun vopt_from_lower ->                   
+              let callback vopt_from_lower : (unit,'t)m =                    
                 with_lru (fun ~lru ~set_lru -> 
                     (* first wake up sleeping threads *)
                     process_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
@@ -185,7 +185,28 @@ let make_lru_ops ~monad_ops ~with_lru ~async =
               in
               set_lru { lru with to_lower=`Find(k,callback)::lru.to_lower }))
   in
+  let insert mode k v callback =
+    with_lru (fun ~lru ~set_lru -> 
+        in_mem_ops.insert k v lru.cache_state 
+        |> function (`Evictees es, `Cache_state cache_state) ->
+          match es with 
+          | None -> set_lru {lru with cache_state}
+          | Some es -> 
+            set_lru { lru with cache_state;
+                               to_lower=(`Evictees es)::lru.to_lower })
+        
+  in
+  let 
+  fun kk -> kk ~find
+  
 
-  ()
+
+(* export ----------------------------------------------------------- *)
+
+open Lru_interface
+
+let make_lru_ops ~monad_ops ~with_lru ~async =
+  make_lru_ops' ~monad_ops ~with_lru ~async @@ fun ~find -> 
+  find
 
 
