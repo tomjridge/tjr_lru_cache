@@ -36,7 +36,7 @@ the pcache.
 
 
 open Tjr_monad.Monad
-open In_mem_cache
+open Lru_in_mem
 
 
 (* lru state -------------------------------------------------------- *)
@@ -185,6 +185,7 @@ let make_lru_ops ~monad_ops ~with_lru ~async =
               in
               set_lru { lru with to_lower=`Find(k,callback)::lru.to_lower }))
   in
+
   ()
 
 

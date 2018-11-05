@@ -2,9 +2,8 @@
 
 (* open Tjr_btree *)
 (* open Base_types *)
-open In_mem_cache
+open Lru_in_mem
 
-module Cache = In_mem_cache
 
 (* we test just cache behaviour, not linked with btree *)
 
@@ -37,7 +36,7 @@ module Test_state = struct
     (Pervasives.compare 
        (s1.spec |> Map_int.bindings) (s2.spec |> Map_int.bindings)) |> then_
       (fun () -> 
-         Cache.compare s1.cache s2.cache) |> then_
+         Lru_in_mem.compare s1.cache s2.cache) |> then_
       (fun () -> 
          Map_int.compare Pervasives.compare s1.base_map s2.base_map)
 
@@ -45,7 +44,7 @@ end
 
 open Test_state
 
-let init_cache = Cache.mk_initial_cache ~compare_k:Tjr_btree.Base_types.Int_.compare |> Cache.normalize
+let init_cache = Lru_in_mem.mk_initial_cache ~compare_k:Tjr_btree.Base_types.Int_.compare |> Lru_in_mem.normalize
 
 let init_base_map = Map_int.empty
 
@@ -62,7 +61,7 @@ let base_find_opt k = fun t ->
   
 
 let (find,insert,delete) = 
-  Cache.make_cached_map () @@
+  Lru_in_mem.make_cached_map () @@
   fun ~find ~insert ~delete -> (find,insert,delete)
 
 (* we modify find so that it utilises the base map *)
@@ -136,7 +135,7 @@ let step t op =
       delete k t
       |> (fun t'-> {t' with spec=Map_int.remove k t'.spec})
   end                   
-  |> (fun x -> [{ x with cache=Cache.normalize x.cache}])
+  |> (fun x -> [{ x with cache=Lru_in_mem.normalize x.cache}])
 
 (* cache invariants:
 
@@ -209,9 +208,9 @@ todo: 11166; done: 1739999 .
 
 (* to test, we need to track the operations *)
 
-let initial_cache = Cache_.initial_cache
+let initial_cache = Lru_in_mem_.initial_cache
 
-open Cache_
+open Lru_in_mem_
 
 (* insert 8 elts *)
 
@@ -221,7 +220,7 @@ let run = Sem.run_ref s0
 
 let _ = 
   for x = 1 to 8 do
-    run (Cache_.insert x x)
+    run (Lru_in_mem_.insert x x)
   done
 
 (* have a look at the state *)
@@ -229,19 +228,19 @@ let _ = !s0
 
 let _ = Map.bindings (!s0).cache.map
 
-let _ = run (Cache_.insert 9 9)
+let _ = run (Lru_in_mem_.insert 9 9)
 
 
 let _ = Map.bindings (!s0).cache.map
 let _ = Queue.bindings (!s0).cache.queue
 let _ = Map_int.bindings (!s0).store.map
 
-let _ = run (Cache_.insert 3 3)
+let _ = run (Lru_in_mem_.insert 3 3)
 
-let _ = run (Cache_.insert 11 11)
-let _ = run (Cache_.find 1|> bind (fun _ -> return ()))
+let _ = run (Lru_in_mem_.insert 11 11)
+let _ = run (Lru_in_mem_.find 1|> bind (fun _ -> return ()))
 
-let _ = run (Cache_.insert 12 12)
+let _ = run (Lru_in_mem_.insert 12 12)
 
 
 *)
