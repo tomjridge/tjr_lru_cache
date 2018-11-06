@@ -55,9 +55,22 @@ type 'v entry_type =
   | Delete of { dirty:dirty }
   | Lower of 'v option
 
+type 'v entry = { entry_type: 'v entry_type; atime: time }
+
+
+(* fns on entrys and entry_types ------------------------------------ *)
+
 let is_Lower = function Lower _ -> true | _ -> false 
 
-type 'v entry = { entry_type: 'v entry_type; atime: time }
+let mark_clean = function
+  | Insert {value;dirty} -> Insert {value;dirty=false}
+  | Delete {dirty} -> Delete {dirty=false}
+  | Lower vopt -> Lower vopt
+
+let entry_type_is_dirty = function
+  | Insert {value;dirty} -> dirty
+  | Delete {dirty} -> dirty
+  | Lower vopt -> false
 
 
 (* cache state ------------------------------------------------------ *)
@@ -99,7 +112,8 @@ type ('k,'v) cache_state = {
 
 module Lru_in_mem_ops = struct
 
-  (** This type is what is returned by the [make_lru_in_mem] function *)
+  (** This type is what is returned by the [make_lru_in_mem]
+     function.  *)
   type ('k,'v,'t) lru_in_mem_ops = {
     find: 'k -> ('k,'v) cache_state -> 
       [ `In_cache of 'v entry
@@ -116,7 +130,10 @@ module Lru_in_mem_ops = struct
 
     delete: 'k -> ('k, 'v) cache_state ->
       [ `Evictees of ('k * 'v entry) list option ] *
-      [ `Cache_state of ('k, 'v) cache_state ]
+      [ `Cache_state of ('k, 'v) cache_state ];
+
+    sync_key: 'k -> ('k, 'v) cache_state -> [ `Not_present | `Present of 'v entry * ('k, 'v) cache_state ]
+
   }
 end
 
@@ -266,6 +283,7 @@ let get_evictees (c:('k,'v)cache_state) =
 let _ = get_evictees
 
 
+
 (** Construct the cached map on top of an existing map.
 
 NOTE the idea for [find] is that we execute a quick step to handle the
@@ -335,18 +353,29 @@ let make_cached_map () =
     (`Evictees es, `Cache_state c)
   in
 
-  let insert k v dirty c = perform k (Insert {value=v; dirty }) c in
-
-  let insert_now k v c = perform k (Insert {value=v; dirty=false }) c in
+  let insert k v c = perform k (Insert {value=v; dirty=true }) c in
 
   (* TODO make insert_many more efficient *)
   (* let insert_many k v kvs c = insert k v c |> fun c -> (kvs,c) in *)
 
-  let delete k dirty c = perform k (Delete {dirty}) c in
+  let delete k c = perform k (Delete {dirty=true}) c in
 
-  let delete_now k c = perform k (Delete {dirty=false}) c in
 
-  fun kk -> kk ~find ~insert ~insert_now ~delete ~delete_now
+  let sync_key k c = 
+    (* FIXME do we want to change the time? *)
+    (* if present, change dirty bit and return entry type *)
+    Poly_map.find_opt k c.cache_map |> function
+    | None -> `Not_present
+    | Some e -> 
+      let e' = { e with entry_type=mark_clean e.entry_type} in
+      Poly_map.add k e' c.cache_map |> fun cache_map ->
+      (* NOTE this returns the old entry *)
+      `Present(e,{c with cache_map})
+  in
+
+  let _ = sync_key in
+
+  fun kk -> kk ~find ~insert ~delete ~sync_key
 
 
 
@@ -356,6 +385,6 @@ let _ = make_cached_map
 include Lru_in_mem_ops
 
 let make_lru_in_mem () = 
-  make_cached_map () @@ fun ~find ~insert ~delete -> 
+  make_cached_map () @@ fun ~find ~insert ~delete ~sync_key -> 
   let open Lru_in_mem_ops in
-  { find; insert; delete }
+  { find; insert; delete; sync_key }

@@ -144,9 +144,21 @@ For sync_key (and sync_keys) we simply take the entry in the cache (if
 any) and mark it clean and flush to lower.
 
 *)
-let make_lru_ops' ~monad_ops ~with_lru ~async =
+open Lru_interface
+
+type ('msg,'k,'v,'t) with_lru_ops = {
+  with_lru: 
+    'a. 
+      (lru:('msg,'k,'v,'t)lru_state -> 
+       set_lru:(('msg,'k,'v,'t)lru_state -> (unit,'t)m)
+       -> ('a,'t)m)
+    -> ('a,'t)m
+}
+
+let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
+  let with_lru = with_lru_ops.with_lru in
   let process_callbacks_for_key = process_callbacks_for_key ~monad_ops ~async in
   let in_mem_ops = make_lru_in_mem() in
   let find k (callback:'v option -> (unit,'t) m) = 
@@ -185,28 +197,91 @@ let make_lru_ops' ~monad_ops ~with_lru ~async =
               in
               set_lru { lru with to_lower=`Find(k,callback)::lru.to_lower }))
   in
+
   let insert mode k v callback =
     with_lru (fun ~lru ~set_lru -> 
         in_mem_ops.insert k v lru.cache_state 
         |> function (`Evictees es, `Cache_state cache_state) ->
-          match es with 
-          | None -> set_lru {lru with cache_state}
-          | Some es -> 
-            set_lru { lru with cache_state;
-                               to_lower=(`Evictees es)::lru.to_lower })
-        
+          (* update lru with evictees *)
+          let to_lower = 
+            match es with 
+            | None -> lru.to_lower
+            | Some es -> (`Evictees es)::lru.to_lower
+          in
+          (* handle mode=persist_now, cache_state *)
+          let cache_state,to_lower = 
+            match mode with
+            | Persist_now -> (
+                in_mem_ops.sync_key k cache_state |> function
+                | `Not_present -> failwith "impossible"
+                | `Present (e,c) -> (
+                    assert(entry_type_is_dirty e.entry_type);
+                    (c,(`Insert(k,v,callback)::to_lower)))
+                (* FIXME order or evictees vs insert? *))
+            | Persist_later -> (cache_state,to_lower)
+          in
+          set_lru {lru with cache_state; to_lower}) >>= fun () ->
+    (if mode=Persist_later then async(callback()) else return ())
   in
-  let 
-  fun kk -> kk ~find
+  
+  let delete mode k callback = 
+    with_lru (fun ~lru ~set_lru -> 
+        in_mem_ops.delete k lru.cache_state 
+        |> function (`Evictees es, `Cache_state cache_state) ->
+          (* update lru with evictees *)
+          let to_lower = 
+            match es with 
+            | None -> lru.to_lower
+            | Some es -> (`Evictees es)::lru.to_lower
+          in
+          (* handle mode=persist_now, cache_state *)
+          let cache_state,to_lower = 
+            match mode with
+            | Persist_now -> (
+                in_mem_ops.sync_key k cache_state |> function
+                | `Not_present -> failwith "impossible"
+                | `Present (e,c) -> (
+                    assert(entry_type_is_dirty e.entry_type);
+                    (c,(`Delete(k,callback)::to_lower)))
+                (* FIXME order or evictees vs insert? *))
+            | Persist_later -> (cache_state,to_lower)
+          in
+          set_lru {lru with cache_state; to_lower}) >>= fun () ->
+    (if mode=Persist_later then async(callback()) else return ())
+  in
+
+  let sync_key k callback = 
+    with_lru (fun ~lru ~set_lru -> 
+        in_mem_ops.sync_key k lru.cache_state |> function
+          | `Not_present -> async (callback ())
+          | `Present (e,cache_state) ->             
+            match entry_type_is_dirty e.entry_type with
+            | false -> 
+              (* just return *)
+              async (callback())
+            | true -> 
+              let to_lower =
+                match e.entry_type with
+                | Insert{value;dirty} ->
+                  (`Insert(k,value,callback)::lru.to_lower)
+                | Delete{dirty} -> 
+                  (`Delete(k,callback)::lru.to_lower)
+                | _ -> lru.to_lower
+              in
+              set_lru {lru with cache_state; to_lower}
+
+      )
+  in
+  fun kk -> kk ~find ~insert ~delete ~sync_key
   
 
 
 (* export ----------------------------------------------------------- *)
 
-open Lru_interface
+(* open Lru_interface *)
 
-let make_lru_ops ~monad_ops ~with_lru ~async =
-  make_lru_ops' ~monad_ops ~with_lru ~async @@ fun ~find -> 
-  find
+let make_lru_ops ~monad_ops ~with_lru_ops ~async =
+  make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
+  (find,insert,delete,sync_key)
 
 

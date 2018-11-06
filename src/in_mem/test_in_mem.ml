@@ -62,7 +62,7 @@ let base_find_opt k = fun t ->
 
 let (find,insert,delete) = 
   Lru_in_mem.make_cached_map () @@
-  fun ~find ~insert ~delete -> (find,insert,delete)
+  fun ~find ~insert ~delete ~sync_key -> (find,insert,delete)
 
 (* we modify find so that it utilises the base map *)
 
