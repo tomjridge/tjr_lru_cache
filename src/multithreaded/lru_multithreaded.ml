@@ -38,6 +38,28 @@ the pcache.
 open Tjr_monad.Monad
 open Lru_in_mem
 
+(* type for the async operation FIXME move to Tjr_monad *)
+
+(** The async operation completes with unit almost immediately; the
+   argument may be a long-running computation; it is scheduled for
+   execution.
+
+    Because even creating an 'a m in lwt schedules computation, we
+   shield the argument to async to avoid computation.  *)
+type 't async = (unit -> (unit,'t) m) -> (unit,'t) m 
+
+
+(* lru_ops type ----------------------------------------------------- *)
+
+(* FIXME do we want eg find to take the callback to 'v option m? or add functionality to fulfil some promise, of type: 'a -> ('a,'t) m -> unit; or rather 'a -> ('a,'t) u -> (unit,'t) m; or can we just call async in the callback? *)
+type ('k,'v,'t) lru_ops = {
+  find: 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
+  insert: Lru_interface.mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
+  delete: Lru_interface.mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+  sync_key: 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+}
+  
+
 
 (* lru state -------------------------------------------------------- *)
 
@@ -99,7 +121,7 @@ let add_callback_on_key ~callback ~k ~lru =
     { lru with blocked_threads },`Need_to_call_lower
 
 (** NOTE this also removes all waiters on key k *)
-let process_callbacks_for_key ~monad_ops ~async ~k ~vopt_from_lower ~lru =
+let process_callbacks_for_key ~monad_ops ~(async:'t async) ~k ~vopt_from_lower ~lru =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let blocked_threads = Poly_map.find_opt k lru.blocked_threads in
@@ -108,7 +130,7 @@ let process_callbacks_for_key ~monad_ops ~async ~k ~vopt_from_lower ~lru =
   let rec loop bs = 
     match bs with
     | [] -> return ()
-    | b::bs -> async(b vopt_from_lower) >>= fun () -> loop bs
+    | b::bs -> async(fun () -> b vopt_from_lower) >>= fun () -> loop bs
   in
   loop blocked_threads >>= fun () -> 
   let blocked_threads = Poly_map.remove k lru.blocked_threads in
@@ -155,7 +177,7 @@ type ('msg,'k,'v,'t) with_lru_ops = {
     -> ('a,'t)m
 }
 
-let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
+let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let with_lru = with_lru_ops.with_lru in
@@ -172,7 +194,10 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
             | Delete _ -> None
             | Lower vopt -> vopt
           in
-          callback vopt
+          async (fun () -> callback vopt)
+        (* FIXME note the callback should not do computation on
+           receiving an argument... it must wait for the world state
+           *)
         | `Not_in_cache kk -> (
             (* now we have to call to the lower level; first we check
                that a call isn't already in process... *)
@@ -198,7 +223,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
               set_lru { lru with to_lower=`Find(k,callback)::lru.to_lower }))
   in
 
-  let insert mode k v callback =
+  let insert mode k v (callback: unit -> (unit,'t)m) =
     with_lru (fun ~lru ~set_lru -> 
         in_mem_ops.insert k v lru.cache_state 
         |> function (`Evictees es, `Cache_state cache_state) ->
@@ -221,7 +246,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
             | Persist_later -> (cache_state,to_lower)
           in
           set_lru {lru with cache_state; to_lower}) >>= fun () ->
-    (if mode=Persist_later then async(callback()) else return ())
+    (if mode=Persist_later then async(callback) else return ())
   in
   
   let delete mode k callback = 
@@ -247,18 +272,18 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
             | Persist_later -> (cache_state,to_lower)
           in
           set_lru {lru with cache_state; to_lower}) >>= fun () ->
-    (if mode=Persist_later then async(callback()) else return ())
+    (if mode=Persist_later then async(callback) else return ())
   in
 
   let sync_key k callback = 
     with_lru (fun ~lru ~set_lru -> 
         in_mem_ops.sync_key k lru.cache_state |> function
-          | `Not_present -> async (callback ())
+          | `Not_present -> async (callback)
           | `Present (e,cache_state) ->             
             match entry_type_is_dirty e.entry_type with
             | false -> 
               (* just return *)
-              async (callback())
+              async (callback)
             | true -> 
               let to_lower =
                 match e.entry_type with
@@ -282,6 +307,9 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~async =
 
 let make_lru_ops ~monad_ops ~with_lru_ops ~async =
   make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
-  (find,insert,delete,sync_key)
+  {find;insert;delete;sync_key}
 
+
+
+(* implement non-callback interface --------------------------------- *)
 

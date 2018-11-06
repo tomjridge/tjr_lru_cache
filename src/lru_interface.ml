@@ -32,34 +32,3 @@ type ('k,'v,'t) lru_ops = {
 }
 
 
-
-(*
-(* We also need to put operations on a queue, to be processed by the pcache. *)
-module Concrete_representation = struct
-
-  (* FIXME do we need to distinguish between raw and with_callback?
-     can't we just provide a dummy callback which does nothing?
-     Probably yes. *)
-
-  (* NOTE in the following, when the lower impl is sure the data is on
-     disk we call the continuation *)
-
-  (* find is always called in blocking mode, so there needs to be some way to return to the caller *)
-  type ('k,'v,'t) find_raw = 
-    | Find : 'k * ('v option -> ('a,'t) m) -> ('k,'v,'t) find_raw
-  and ('k,'v) non_find_raw' =
-    | Insert of 'k * 'v 
-    | Delete of 'k 
-    | Sync_key of 'k 
-    | Sync_all_keys 
-  and ('k,'v,'t) non_find_raw = ('k,'v) non_find_raw' * (unit -> (unit,'t) m)
-  and ('k,'v,'a,'t) flushable_map_ops' =
-    | Find_raw of ('k,'v,'t) find_raw 
-    | Non_find_raw of ('k,'v,'t) non_find_raw
-    | Batch of ('k,'v) non_find_raw' list * (unit -> (unit,'t) m)
-
-  (* NOTE a problem with this approach is that the 'a is different for
-     every caller; this is why we use GADTs to eliminate the 'a tyvar
-     *)
-end
-*)
