@@ -36,6 +36,7 @@ the pcache.
 
 
 open Tjr_monad.Monad
+open Persist_mode
 open Lru_in_mem
 
 (* type for the async operation FIXME move to Tjr_monad *)
@@ -51,14 +52,17 @@ type 't async = (unit -> (unit,'t) m) -> (unit,'t) m
 
 (* lru_ops type ----------------------------------------------------- *)
 
+
+module Lru_ops = struct
 (* FIXME do we want eg find to take the callback to 'v option m? or add functionality to fulfil some promise, of type: 'a -> ('a,'t) m -> unit; or rather 'a -> ('a,'t) u -> (unit,'t) m; or can we just call async in the callback? *)
 type ('k,'v,'t) lru_ops = {
   find: 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
-  insert: Lru_interface.mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
-  delete: Lru_interface.mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+  insert: mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
+  delete: mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
   sync_key: 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
 }
-  
+end
+include Lru_ops  
 
 
 (* lru state -------------------------------------------------------- *)
@@ -86,7 +90,7 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
 
 - a queue of messages (most recent first) to the lower level
 
-The lower "disk" layer is defined in {!module: Pcache_interface}. FIXME?
+The lower "disk" layer is defined elsewhere. We just put messages on the list [to_lower], so these messages are the API.
 
 NOTE Access to the lower layer is serialized. Messages are added to
    [to_lower] in order. There is another thread which takes messages
@@ -95,11 +99,15 @@ NOTE Access to the lower layer is serialized. Messages are added to
 
 NOTE Access to the [lru_state] is serialized via [with_lru].  
 *)
+module Lru_state = struct
 type ('msg,'k,'v,'t) lru_state = { 
   cache_state: ('k,'v) cache_state; 
   blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
   to_lower: 'msg list; (** NOTE in reverse order  *)
 }
+end
+include Lru_state
+
 
 (** NOTE the following, which essentially adds waiting threads to a
     wait queue, and notifies them when an event occurs, is a
@@ -166,7 +174,6 @@ For sync_key (and sync_keys) we simply take the entry in the cache (if
 any) and mark it clean and flush to lower.
 
 *)
-open Lru_interface
 
 type ('msg,'k,'v,'t) with_lru_ops = {
   with_lru: 
@@ -307,6 +314,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
 
 let make_lru_ops ~monad_ops ~with_lru_ops ~async =
   make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
+  let open Lru_ops in
   {find;insert;delete;sync_key}
 
 

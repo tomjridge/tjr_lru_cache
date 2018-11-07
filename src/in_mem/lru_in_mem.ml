@@ -50,13 +50,15 @@ Additionally, each entry has a last-accessed time
 
  *)
 
+module Entry_type = struct
 type 'v entry_type = 
   | Insert of { value: 'v; dirty:dirty }
   | Delete of { dirty:dirty }
   | Lower of 'v option
 
 type 'v entry = { entry_type: 'v entry_type; atime: time }
-
+end
+include Entry_type
 
 (* fns on entrys and entry_types ------------------------------------ *)
 
@@ -98,6 +100,7 @@ walking the entire map.
 
 *)
 
+module Cache_state = struct
 type ('k,'v) cache_state = {  
   max_size: int;
   evict_count: int; (* number to evict when cache full *)
@@ -105,7 +108,8 @@ type ('k,'v) cache_state = {
   cache_map: ('k,'v entry) Tjr_polymap.t;  
   queue: 'k Queue.t; (** map from time to key that was accessed at that time *)
 }
-
+end
+include Cache_state
 
 
 (* ops type --------------------------------------------------------- *)
@@ -113,7 +117,10 @@ type ('k,'v) cache_state = {
 module Lru_in_mem_ops = struct
 
   (** This type is what is returned by the [make_lru_in_mem]
-     function.  *)
+     function. 
+
+      NOTE that [sync_key] performs only the in-mem updates (ie clearing the dirty flag). If you want to flush to disk, you have to do something else (see {!Lru_multithreaded}).
+ *)
   type ('k,'v,'t) lru_in_mem_ops = {
     find: 'k -> ('k,'v) cache_state -> 
       [ `In_cache of 'v entry

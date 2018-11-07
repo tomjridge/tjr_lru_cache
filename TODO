@@ -1,4 +1,7 @@
 -*- org -*-
 
+- the Lru_multithreaded.make_lru_ops currently uses a callback
+  interface; prefer to use lru_types.lru_ops non-callback intf
+  - implement in lru_mt
 - test performance of LRU; we want fs performance limited by disk not
   intermediate caching
