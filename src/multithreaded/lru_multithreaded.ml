@@ -97,7 +97,7 @@ NOTE Access to the [lru_state] is serialized via [with_lru].
 *)
 type ('msg,'k,'v,'t) lru_state = { 
   cache_state: ('k,'v) cache_state; 
-  blocked_threads: ('k,('v,'t) blocked_thread list) Poly_map.t;
+  blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
   to_lower: 'msg list; (** NOTE in reverse order  *)
 }
 
@@ -108,14 +108,14 @@ type ('msg,'k,'v,'t) lru_state = {
    implementation using the local state [blocked_threads] (rather than
    some generic version provided by the monad) *)
 let add_callback_on_key ~callback ~k ~lru = 
-  match Poly_map.find_opt k lru.blocked_threads with
+  match Tjr_polymap.find_opt k lru.blocked_threads with
   | Some xs -> 
     (* just add the callback to the list *)
     let xs = callback::xs in
-    let blocked_threads = Poly_map.add k xs lru.blocked_threads in
+    let blocked_threads = Tjr_polymap.add k xs lru.blocked_threads in
     { lru with blocked_threads },`Lower_call_in_progress
   | None -> 
-    let blocked_threads = Poly_map.add k [callback] lru.blocked_threads in
+    let blocked_threads = Tjr_polymap.add k [callback] lru.blocked_threads in
     (* we want to issue a `Find k call to lower, with a callback that
        unblocks the waiting threads *)
     { lru with blocked_threads },`Need_to_call_lower
@@ -124,7 +124,7 @@ let add_callback_on_key ~callback ~k ~lru =
 let process_callbacks_for_key ~monad_ops ~(async:'t async) ~k ~vopt_from_lower ~lru =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
-  let blocked_threads = Poly_map.find_opt k lru.blocked_threads in
+  let blocked_threads = Tjr_polymap.find_opt k lru.blocked_threads in
   assert(blocked_threads <> None);                    
   let blocked_threads = blocked_threads |> Tjr_prelude.dest_Some in
   let rec loop bs = 
@@ -133,7 +133,7 @@ let process_callbacks_for_key ~monad_ops ~(async:'t async) ~k ~vopt_from_lower ~
     | b::bs -> async(fun () -> b vopt_from_lower) >>= fun () -> loop bs
   in
   loop blocked_threads >>= fun () -> 
-  let blocked_threads = Poly_map.remove k lru.blocked_threads in
+  let blocked_threads = Tjr_polymap.remove k lru.blocked_threads in
   return {lru with blocked_threads}
 
 

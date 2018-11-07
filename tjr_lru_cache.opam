@@ -16,5 +16,6 @@ build: [
 
 depends: [
   "tjr_btree"
+  "tjr_polymap"
 ]
 

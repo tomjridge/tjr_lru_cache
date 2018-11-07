@@ -102,7 +102,7 @@ type ('k,'v) cache_state = {
   max_size: int;
   evict_count: int; (* number to evict when cache full *)
   current_time: time;
-  cache_map: ('k,'v entry) Poly_map.t;  
+  cache_map: ('k,'v entry) Tjr_polymap.t;  
   queue: 'k Queue.t; (** map from time to key that was accessed at that time *)
 }
 
@@ -158,8 +158,8 @@ let compare c1 c2 =
   test(fun _ -> assert (c1.max_size = c2.max_size));
   (Pervasives.compare c1.current_time c2.current_time) |> then_
     (fun () -> Pervasives.compare 
-        (c1.cache_map |> Poly_map.bindings)
-        (c2.cache_map |> Poly_map.bindings)) |> then_
+        (c1.cache_map |> Tjr_polymap.bindings)
+        (c2.cache_map |> Tjr_polymap.bindings)) |> then_
     (fun () -> Pervasives.compare
         (c1.queue |> Map_int.bindings)
         (c2.queue |> Map_int.bindings))
@@ -176,11 +176,11 @@ let compare c1 c2 =
 let wf c =
   test @@ fun () -> 
   assert (
-    (* Printf.printf "wf: %d %d\n" (Poly_map.cardinal c.cache_map) c.max_size; *)
-    Poly_map.cardinal c.cache_map <= c.max_size);
+    (* Printf.printf "wf: %d %d\n" (Tjr_polymap.cardinal c.cache_map) c.max_size; *)
+    Tjr_polymap.cardinal c.cache_map <= c.max_size);
   assert (Queue.cardinal c.queue <= c.max_size);
-  assert (Poly_map.cardinal c.cache_map = Queue.cardinal c.queue);
-  Poly_map.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
+  assert (Tjr_polymap.cardinal c.cache_map = Queue.cardinal c.queue);
+  Tjr_polymap.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
   ()
   
 (** For testing, we typically need to normalize wrt. time *)
@@ -199,7 +199,7 @@ let normalize c =
     c.queue;
   {c with
    current_time=(!time);
-   cache_map=Poly_map.map (fun entry -> {entry with atime = Map_int.find entry.atime (!t_map)}) c.cache_map;
+   cache_map=Tjr_polymap.map (fun entry -> {entry with atime = Map_int.find entry.atime (!t_map)}) c.cache_map;
    queue=(!queue) }
 
 
@@ -211,7 +211,7 @@ let mk_initial_cache ~compare_k = {
   max_size=4;
   evict_count=2;
   current_time=0;
-  cache_map=((Poly_map.empty compare_k):('k,'v)Poly_map.t);
+  cache_map=((Tjr_polymap.empty compare_k):('k,'v)Tjr_polymap.t);
   queue=Queue.empty
 }
 
@@ -227,12 +227,12 @@ let tick c = { c with current_time=c.current_time+1}
 let find_in_cache ~update_time (k:'k) (c:('k,'v)cache_state) = 
   let c = tick c in
   try 
-    let e = Poly_map.find k c.cache_map in          
+    let e = Tjr_polymap.find k c.cache_map in          
     (* update time *)
     let c = 
       if update_time then
         {c with 
-         cache_map=Poly_map.add k {e with atime=c.current_time} c.cache_map;
+         cache_map=Tjr_polymap.add k {e with atime=c.current_time} c.cache_map;
          queue=c.queue |> Queue.remove e.atime |> Queue.add c.current_time k}
       else 
         c
@@ -252,7 +252,7 @@ exception E_
 (** Returns None if no evictees need to be flushed, or Some(evictees)
    otherwise *)
 let get_evictees (c:('k,'v)cache_state) = 
-  let card = Poly_map.cardinal c.cache_map in
+  let card = Tjr_polymap.cardinal c.cache_map in
   match card > c.max_size with (* FIXME inefficient *)
   | false -> (None,c)
   | true -> 
@@ -269,8 +269,8 @@ let get_evictees (c:('k,'v)cache_state) =
         Queue.iter 
           (fun time k -> 
              queue:=Queue.remove time !queue;
-             evictees:=(k,Poly_map.find k c.cache_map)::!evictees;
-             cache_map:=Poly_map.remove k !cache_map;
+             evictees:=(k,Tjr_polymap.find k c.cache_map)::!evictees;
+             cache_map:=Tjr_polymap.remove k !cache_map;
              count:=!count +1;
              if !count >= n then raise E_ else ())
           c.queue
@@ -312,7 +312,7 @@ let make_cached_map () =
           (* FIXME concurrency concerns: v may be stale if we get from lower, but cache updated in meantime *)
           let new_entry = Lower vopt_from_lower in
           { c with
-            cache_map=Poly_map.add k 
+            cache_map=Tjr_polymap.add k 
                 {entry_type=new_entry; atime=c.current_time} 
                 c.cache_map;
             queue=c.queue |> Queue.add c.current_time k } |> fun c ->
@@ -334,12 +334,12 @@ let make_cached_map () =
     let c = tick c in
     let e = 
       try 
-        Some (Poly_map.find k c.cache_map)
+        Some (Tjr_polymap.find k c.cache_map)
       with Not_found -> None 
     in
     let e' = {entry_type; atime=c.current_time } in
     (* new entry in cache_map *)
-    let c = {c with cache_map=(Poly_map.add k e' c.cache_map) } in
+    let c = {c with cache_map=(Tjr_polymap.add k e' c.cache_map) } in
     (* maybe remove existing entry from queue *)
     let c = 
       match e with
@@ -364,11 +364,11 @@ let make_cached_map () =
   let sync_key k c = 
     (* FIXME do we want to change the time? *)
     (* if present, change dirty bit and return entry type *)
-    Poly_map.find_opt k c.cache_map |> function
+    Tjr_polymap.find_opt k c.cache_map |> function
     | None -> `Not_present
     | Some e -> 
       let e' = { e with entry_type=mark_clean e.entry_type} in
-      Poly_map.add k e' c.cache_map |> fun cache_map ->
+      Tjr_polymap.add k e' c.cache_map |> fun cache_map ->
       (* NOTE this returns the old entry *)
       `Present(e,{c with cache_map})
   in
