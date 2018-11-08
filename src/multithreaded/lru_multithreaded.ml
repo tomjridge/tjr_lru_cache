@@ -80,6 +80,14 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
    we can have a "suspend on" operation, and a "wakeup_all" operation,
    like lwt's task and bind *)
 
+module Msg = struct
+type ('k,'v,'t) msg = 
+  Insert of 'k*'v*(unit -> (unit,'t)m)
+  | Delete of 'k*(unit -> (unit,'t)m)
+  | Find of 'k * ('v option -> (unit,'t)m)
+  | Evictees of ('k * 'v entry) list
+end
+include Msg
 
 (** The [lru_state] consists of:
 
@@ -100,10 +108,10 @@ NOTE Access to the lower layer is serialized. Messages are added to
 NOTE Access to the [lru_state] is serialized via [with_lru].  
 *)
 module Lru_state = struct
-type ('msg,'k,'v,'t) lru_state = { 
+type ('k,'v,'t) lru_state = { 
   cache_state: ('k,'v) cache_state; 
   blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
-  to_lower: 'msg list; (** NOTE in reverse order  *)
+  to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
 }
 end
 include Lru_state
@@ -178,8 +186,8 @@ any) and mark it clean and flush to lower.
 type ('msg,'k,'v,'t) with_lru_ops = {
   with_lru: 
     'a. 
-      (lru:('msg,'k,'v,'t)lru_state -> 
-       set_lru:(('msg,'k,'v,'t)lru_state -> (unit,'t)m)
+      (lru:('k,'v,'t)lru_state -> 
+       set_lru:(('k,'v,'t)lru_state -> (unit,'t)m)
        -> ('a,'t)m)
     -> ('a,'t)m
 }
@@ -225,9 +233,9 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                     | None -> set_lru {lru with cache_state}
                     | Some es -> 
                       set_lru {lru with cache_state; 
-                                        to_lower=(`Evictees es)::lru.to_lower })
+                                        to_lower=(Evictees es)::lru.to_lower })
               in
-              set_lru { lru with to_lower=`Find(k,callback)::lru.to_lower }))
+              set_lru { lru with to_lower=Find(k,callback)::lru.to_lower }))
   in
 
   let insert mode k v (callback: unit -> (unit,'t)m) =
@@ -238,7 +246,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
           let to_lower = 
             match es with 
             | None -> lru.to_lower
-            | Some es -> (`Evictees es)::lru.to_lower
+            | Some es -> (Evictees es)::lru.to_lower
           in
           (* handle mode=persist_now, cache_state *)
           let cache_state,to_lower = 
@@ -248,7 +256,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
                     assert(entry_type_is_dirty e.entry_type);
-                    (c,(`Insert(k,v,callback)::to_lower)))
+                    (c,(Insert(k,v,callback)::to_lower)))
                 (* FIXME order or evictees vs insert? *))
             | Persist_later -> (cache_state,to_lower)
           in
@@ -264,7 +272,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
           let to_lower = 
             match es with 
             | None -> lru.to_lower
-            | Some es -> (`Evictees es)::lru.to_lower
+            | Some es -> (Evictees es)::lru.to_lower
           in
           (* handle mode=persist_now, cache_state *)
           let cache_state,to_lower = 
@@ -274,7 +282,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
                     assert(entry_type_is_dirty e.entry_type);
-                    (c,(`Delete(k,callback)::to_lower)))
+                    (c,(Delete(k,callback)::to_lower)))
                 (* FIXME order or evictees vs insert? *))
             | Persist_later -> (cache_state,to_lower)
           in
@@ -295,9 +303,9 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
               let to_lower =
                 match e.entry_type with
                 | Insert{value;dirty} ->
-                  (`Insert(k,value,callback)::lru.to_lower)
+                  (Insert(k,value,callback)::lru.to_lower)
                 | Delete{dirty} -> 
-                  (`Delete(k,callback)::lru.to_lower)
+                  (Delete(k,callback)::lru.to_lower)
                 | _ -> lru.to_lower
               in
               set_lru {lru with cache_state; to_lower}
