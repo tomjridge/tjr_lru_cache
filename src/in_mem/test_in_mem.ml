@@ -44,7 +44,7 @@ end
 
 open Test_state
 
-let init_cache = Lru_in_mem.mk_initial_cache ~compare_k:Tjr_btree.Base_types.Int_.compare |> Lru_in_mem.normalize
+let init_cache = Lru_in_mem.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Lru_in_mem.normalize
 
 let init_base_map = Map_int.empty
 

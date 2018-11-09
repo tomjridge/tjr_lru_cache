@@ -35,7 +35,7 @@ the pcache.
 *)
 
 
-open Tjr_monad.Monad
+open Tjr_monad.Types
 open Persist_mode
 open Lru_in_mem
 

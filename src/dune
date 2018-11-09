@@ -1,6 +1,6 @@
 (library
   (name tjr_lru_cache)
   (public_name tjr_lru_cache)
-  (libraries tjr_btree tjr_polymap))
+  (libraries tjr_polymap tjr_monad tjr_fs_shared))
 
 (include_subdirs unqualified)
