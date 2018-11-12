@@ -16,5 +16,7 @@ build: [
 
 depends: [
   "tjr_polymap"
+  "tjr_monad"
+  "tjr_fs_shared"
 ]
 
