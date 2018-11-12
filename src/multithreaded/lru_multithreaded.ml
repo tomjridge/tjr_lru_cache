@@ -50,18 +50,9 @@ open Lru_in_mem
 type 't async = (unit -> (unit,'t) m) -> (unit,'t) m 
 
 
-(* lru_ops type ----------------------------------------------------- *)
+(* lru_callback_ops type  --------------------------------------- *)
 
 
-module Lru_callback_ops = struct
-(* FIXME do we want eg find to take the callback to 'v option m? or add functionality to fulfil some promise, of type: 'a -> ('a,'t) m -> unit; or rather 'a -> ('a,'t) u -> (unit,'t) m; or can we just call async in the callback? *)
-type ('k,'v,'t) lru_callback_ops = {
-  find: 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
-  insert: mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
-  delete: mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
-  sync_key: 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
-}
-end
 include Lru_callback_ops  
 
 
@@ -80,13 +71,6 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
    we can have a "suspend on" operation, and a "wakeup_all" operation,
    like lwt's task and bind *)
 
-module Msg = struct
-type ('k,'v,'t) msg = 
-  Insert of 'k*'v*(unit -> (unit,'t)m)
-  | Delete of 'k*(unit -> (unit,'t)m)
-  | Find of 'k * ('v option -> (unit,'t)m)
-  | Evictees of ('k * 'v entry) list
-end
 include Msg
 
 (** The [lru_state] consists of:
@@ -320,6 +304,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
 
 (* open Lru_interface *)
 
+(** Construct the LRU callback-oriented interface *)
 let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
   make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
   let open Lru_callback_ops in
@@ -330,10 +315,8 @@ let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
 (* implement non-callback interface --------------------------------- *)
 
 (** We assume that there is a way to "fulfill" an 'a m with an 'a  *)
-type 't event_ops = {
-  create: 'a. unit -> ('a,'t)m;
-  signal: 'a. ('a,'t) m -> 'a -> (unit,'t)m;
-}
+type 't event_ops = 't Tjr_monad.Event.event_ops 
+
 
 module Lru_ops = struct
 
@@ -365,21 +348,22 @@ let make_lru_ops ~monad_ops ~event_ops ~callback_ops =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let {find;insert;delete;sync_key} = callback_ops in
+  let {ev_create=create;ev_signal=signal;ev_wait=wait} = event_ops in
   let find k = 
-    let e = event_ops.create() in
-    (find k (fun v -> event_ops.signal e v)) >>= fun () -> e
+    create() >>= fun e ->
+    (find k (fun v -> signal e v)) >>= fun () -> wait e
   in
   let insert mode k v =
-    let e = event_ops.create() in
-    (insert mode k v (fun () -> event_ops.signal e ())) >>= fun () -> e
+    create() >>= fun e ->
+    (insert mode k v (fun () -> signal e ())) >>= fun () -> wait e
   in
   let delete mode k = 
-    let e = event_ops.create() in
-    (delete mode k (fun () -> event_ops.signal e ())) >>= fun () -> e
+    create() >>= fun e ->
+    (delete mode k (fun () -> signal e ())) >>= fun () -> wait e
   in
   let sync_key k =
-    let e = event_ops.create() in
-    (sync_key k (fun () -> event_ops.signal e ())) >>= fun () -> e
+    create() >>= fun e -> 
+    (sync_key k (fun () -> signal e ())) >>= fun () -> wait e
   in
   let sync_all_keys () =
     failwith "FIXME TODO not implemented yet"

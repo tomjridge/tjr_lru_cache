@@ -22,11 +22,8 @@ NOTE that the operations occur not in a monad - instead, explicit
 (** FIXME tests are enabled; disable for production *)
 let test f = f ()
 
-(** The cache maintains an internal clock. *)
-type time = int
 
-(** Entries are marked using a bool; true means "this is dirty". *)
-type dirty = bool
+include Entry
 
 module Map_int = Tjr_fs_shared.Map_int
 
@@ -49,16 +46,6 @@ Entries in the cache for key k:
 Additionally, each entry has a last-accessed time
 
  *)
-
-module Entry_type = struct
-type 'v entry_type = 
-  | Insert of { value: 'v; dirty:dirty }
-  | Delete of { dirty:dirty }
-  | Lower of 'v option
-
-type 'v entry = { entry_type: 'v entry_type; atime: time }
-end
-include Entry_type
 
 (* fns on entrys and entry_types ------------------------------------ *)
 
