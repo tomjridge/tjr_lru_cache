@@ -1,6 +1,6 @@
 (** A record to package up the functions from {! Lru_in_mem}. *)
 open Entry.Types
-open Cache_state.Types
+open Im_cache_state.Types
 
 (** This type is what is returned by the [make_lru_in_mem]
     function. 

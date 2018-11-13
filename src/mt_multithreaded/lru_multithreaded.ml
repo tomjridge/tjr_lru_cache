@@ -39,7 +39,7 @@ open Tjr_monad.Types
 open Persist_mode
 open Lru_in_mem
 open Entry
-open Cache_state
+open Im_cache_state
 open Mt_callback_ops_type
 
 

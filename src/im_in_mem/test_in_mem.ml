@@ -17,7 +17,7 @@ type op = Find of key | Insert of key * value | Delete of key
 
 
 module Test_state = struct 
-  open Cache_state
+  open Im_cache_state
   
   (* the spec state is the combined view of the cache and the base map ? *)
   type spec_state = int Map_int.t
@@ -35,7 +35,7 @@ module Test_state = struct
     (Pervasives.compare 
        (s1.spec |> Map_int.bindings) (s2.spec |> Map_int.bindings)) |> then_
       (fun () -> 
-         Cache_state.compare s1.cache s2.cache) |> then_
+         Im_cache_state.compare s1.cache s2.cache) |> then_
       (fun () -> 
          Map_int.compare Pervasives.compare s1.base_map s2.base_map)
 
@@ -43,7 +43,7 @@ end
 
 open Test_state
 
-let init_cache = Cache_state.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Cache_state.normalize
+let init_cache = Im_cache_state.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Im_cache_state.normalize
 
 let init_base_map = Map_int.empty
 
@@ -134,7 +134,7 @@ let step t op =
       delete k t
       |> (fun t'-> {t' with spec=Map_int.remove k t'.spec})
   end                   
-  |> (fun x -> [{ x with cache=Cache_state.normalize x.cache}])
+  |> (fun x -> [{ x with cache=Im_cache_state.normalize x.cache}])
 
 (* cache invariants:
 
@@ -155,7 +155,7 @@ let step t op =
    we already check internal invariants of course
 *)
 
-let check_state x = (Cache_state.wf x.cache) (* FIXME TODO *)
+let check_state x = (Im_cache_state.wf x.cache) (* FIXME TODO *)
 let check_step x op y = () (* FIXME TODO *)
 
 let test_ops = { step; check_state; check_step }

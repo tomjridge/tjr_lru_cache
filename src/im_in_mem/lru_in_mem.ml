@@ -24,7 +24,7 @@ let test f = f ()
 
 
 open Entry
-open Cache_state.Types
+open Im_cache_state.Types
 
 
 
@@ -203,5 +203,5 @@ let _ = make_cached_map
 (** Package up the operations in a record *)
 let make_lru_in_mem () = 
   make_cached_map () @@ fun ~find ~insert ~delete ~sync_key -> 
-  let open Lru_in_mem_ops_type in
+  let open Im_ops_type in
   { find; insert; delete; sync_key }
