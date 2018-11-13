@@ -23,191 +23,9 @@ NOTE that the operations occur not in a monad - instead, explicit
 let test f = f ()
 
 
-include Entry
+open Entry
+open Cache_state.Types
 
-module Map_int = Tjr_fs_shared.Map_int
-
-(** We maintain a queue as a map from time to key that was accessed at
-   that time. *)
-module Queue = Map_int
-
-(** Cache map entries; values in the map are tagged with a last-accessed time and a dirty flag
-
-Entries in the cache for key k:
-
-- Insert v (dirty=true/false)
-    {ul {li this occurs on insert}}
-- Delete   (dirty=true/false)
-- Lower vopt 
-    {ul {li this occurs when we check the lower layer for a non-existing entry in cache}}
-- (No entry)
-    {ul {li for a key that hasn't been seen before}}
-
-Additionally, each entry has a last-accessed time
-
- *)
-
-(* fns on entrys and entry_types ------------------------------------ *)
-
-let is_Lower = function Lower _ -> true | _ -> false 
-
-let mark_clean = function
-  | Insert {value;dirty} -> Insert {value;dirty=false}
-  | Delete {dirty} -> Delete {dirty=false}
-  | Lower vopt -> Lower vopt
-
-let entry_type_is_dirty = function
-  | Insert {value;dirty} -> dirty
-  | Delete {dirty} -> dirty
-  | Lower vopt -> false
-
-
-(* cache state ------------------------------------------------------ *)
-
-(** The [cache_state] consists of:
-
-- [max_size]: the max number of entries in the cache
-
-- [evict_count]: number of entries to evict when cache full; for
-   [tjr_kv] performance is best when the [evict_count] is such that
-   the evictees fit nicely in a block
-
-- [current_time]: the current time (monotonically increasing); increased on
-   each operation
-
-- [cache_map]: the cache entries, a map from key to ['v value]
-
-- [queue]: a map from time to key that was accessed at that time; only
-   holds the latest time a key was accessed (earlier entries for key k
-   are deleted when a new operation on k occurs).
-
-
-NOTE the [queue] field allows to identify the least recently used without
-walking the entire map.
-
-*)
-
-module Cache_state = struct
-type ('k,'v) cache_state = {  
-  max_size: int;
-  evict_count: int; (* number to evict when cache full *)
-  current_time: time;
-  cache_map: ('k,'v entry) Tjr_polymap.t;  
-  queue: 'k Queue.t; (** map from time to key that was accessed at that time *)
-}
-end
-include Cache_state
-
-
-(* ops type --------------------------------------------------------- *)
-
-module Lru_in_mem_ops = struct
-
-  (** This type is what is returned by the [make_lru_in_mem]
-     function. 
-
-      NOTE that [sync_key] performs only the in-mem updates (ie clearing the dirty flag). If you want to flush to disk, you have to do something else (see {!Lru_multithreaded}).
- *)
-  type ('k,'v,'t) lru_in_mem_ops = {
-    find: 'k -> ('k,'v) cache_state -> 
-      [ `In_cache of 'v entry
-      | `Not_in_cache of
-           vopt_from_lower:'v option ->
-           cache_state:('k, 'v) cache_state ->
-           'v option * 
-           [ `Evictees of ('k * 'v entry) list option ] *
-           [ `Cache_state of ('k, 'v) cache_state ] ];
-
-    insert: 'k -> 'v -> ('k,'v) cache_state ->
-      [ `Evictees of ('k * 'v entry) list option ] *
-      [ `Cache_state of ('k, 'v) cache_state ];
-
-    delete: 'k -> ('k, 'v) cache_state ->
-      [ `Evictees of ('k * 'v entry) list option ] *
-      [ `Cache_state of ('k, 'v) cache_state ];
-
-    sync_key: 'k -> ('k, 'v) cache_state -> [ `Not_present | `Present of 'v entry * ('k, 'v) cache_state ]
-
-  }
-end
-
-
-
-(*
-(* res -------------------------------------------------------------- *)
-
-(** Each operation produces a value (possibly unit), an optional list of evictees, and an updated cache state *)
-type ('a,'k,'v) res = { ret_val: 'a; es: ('k*'v entry) list option; c:('k,'v)cache_state }
-*)
-
-
-
-(* cache state operations ------------------------------------------- *)
-
-(* We need to ensure the map and queue are coordinated *)
-
-let then_ f x = (if x=0 then f () else x)
-
-let compare c1 c2 =
-  test(fun _ -> assert (c1.max_size = c2.max_size));
-  (Pervasives.compare c1.current_time c2.current_time) |> then_
-    (fun () -> Pervasives.compare 
-        (c1.cache_map |> Tjr_polymap.bindings)
-        (c2.cache_map |> Tjr_polymap.bindings)) |> then_
-    (fun () -> Pervasives.compare
-        (c1.queue |> Map_int.bindings)
-        (c2.queue |> Map_int.bindings))
-
-
-(** Cache wellformedness, check various invariants. 
-
-- the cache never has more than max_size elts 
-- the queue never has more than max_size elts 
-- all k in map are in the queue; iff
-- map and queue agree on timings
-
-*)
-let wf c =
-  test @@ fun () -> 
-  assert (
-    (* Printf.printf "wf: %d %d\n" (Tjr_polymap.cardinal c.cache_map) c.max_size; *)
-    Tjr_polymap.cardinal c.cache_map <= c.max_size);
-  assert (Queue.cardinal c.queue <= c.max_size);
-  assert (Tjr_polymap.cardinal c.cache_map = Queue.cardinal c.queue);
-  Tjr_polymap.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
-  ()
-  
-(** For testing, we typically need to normalize wrt. time *)
-let normalize c =
-  (* we need to map times to times *)
-  let t_map = ref Queue.empty in
-  let time = ref 0 in
-  let queue = ref Queue.empty in
-  Queue.iter
-    (fun t k -> 
-       let t' = (!time) in
-       t_map:=Map_int.add t t' (!t_map);
-       queue:=Queue.add t' k (!queue);
-       time:=!time+1;
-       ())
-    c.queue;
-  {c with
-   current_time=(!time);
-   cache_map=Tjr_polymap.map (fun entry -> {entry with atime = Map_int.find entry.atime (!t_map)}) c.cache_map;
-   queue=(!queue) }
-
-
-
-
-(** Construct the initial cache using some relatively small values for
-   [max_size] etc. *)
-let mk_initial_cache ~compare_k = {
-  max_size=4;
-  evict_count=2;
-  current_time=0;
-  cache_map=((Tjr_polymap.empty compare_k):('k,'v)Tjr_polymap.t);
-  queue=Queue.empty
-}
 
 
 (* find_in_cache, get_evictees  --------------------------------- *)
@@ -303,7 +121,8 @@ let make_cached_map () =
           let c = cache_state in
           let c = tick c in
           (* need to update map before returning *)
-          (* FIXME concurrency concerns: v may be stale if we get from lower, but cache updated in meantime *)
+          (* FIXME concurrency concerns: v may be stale if we get from
+             lower, but cache updated in meantime *)
           let new_entry = Lower vopt_from_lower in
           { c with
             cache_map=Tjr_polymap.add k 
@@ -320,7 +139,8 @@ let make_cached_map () =
   let _ = find in
 
 
-  (* FIXME TODO we need to also handle the cases where we flush to lower immediately *)
+  (* FIXME TODO we need to also handle the cases where we flush to
+     lower immediately *)
 
   (* NOTE entry_type is not Lower *)
   let perform k entry_type c = 
@@ -376,9 +196,12 @@ let make_cached_map () =
 let _ = make_cached_map
 
 
-include Lru_in_mem_ops
 
+(* export as record ------------------------------------------------- *)
+
+
+(** Package up the operations in a record *)
 let make_lru_in_mem () = 
   make_cached_map () @@ fun ~find ~insert ~delete ~sync_key -> 
-  let open Lru_in_mem_ops in
+  let open Lru_in_mem_ops_type in
   { find; insert; delete; sync_key }

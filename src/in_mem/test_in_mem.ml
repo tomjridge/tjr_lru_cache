@@ -1,8 +1,7 @@
-(* testing in mem cache ---------------------------------------- *)
+(** Tests for the in-mem cache ---------------------------------- *)
 
-(* open Tjr_btree *)
-(* open Base_types *)
-open Lru_in_mem
+open Tjr_fs_shared
+open Entry.Types
 
 
 (* we test just cache behaviour, not linked with btree *)
@@ -18,7 +17,7 @@ type op = Find of key | Insert of key * value | Delete of key
 
 
 module Test_state = struct 
-
+  open Cache_state
   
   (* the spec state is the combined view of the cache and the base map ? *)
   type spec_state = int Map_int.t
@@ -36,7 +35,7 @@ module Test_state = struct
     (Pervasives.compare 
        (s1.spec |> Map_int.bindings) (s2.spec |> Map_int.bindings)) |> then_
       (fun () -> 
-         Lru_in_mem.compare s1.cache s2.cache) |> then_
+         Cache_state.compare s1.cache s2.cache) |> then_
       (fun () -> 
          Map_int.compare Pervasives.compare s1.base_map s2.base_map)
 
@@ -44,7 +43,7 @@ end
 
 open Test_state
 
-let init_cache = Lru_in_mem.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Lru_in_mem.normalize
+let init_cache = Cache_state.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Cache_state.normalize
 
 let init_base_map = Map_int.empty
 
@@ -135,7 +134,7 @@ let step t op =
       delete k t
       |> (fun t'-> {t' with spec=Map_int.remove k t'.spec})
   end                   
-  |> (fun x -> [{ x with cache=Lru_in_mem.normalize x.cache}])
+  |> (fun x -> [{ x with cache=Cache_state.normalize x.cache}])
 
 (* cache invariants:
 
@@ -156,7 +155,7 @@ let step t op =
    we already check internal invariants of course
 *)
 
-let check_state x = (wf x.cache) (* FIXME TODO *)
+let check_state x = (Cache_state.wf x.cache) (* FIXME TODO *)
 let check_step x op y = () (* FIXME TODO *)
 
 let test_ops = { step; check_state; check_step }
@@ -188,61 +187,5 @@ let test range =
   Printf.printf "%s: " __MODULE__;
   test ~set_ops ~test_ops ~ops ~init_states:[initial_state];
   print_string "\n\n";
-
-
-
-(* old ============================================================ *)
-
-(* let _ = main () *)
-
-(* with range 1..5 takes a while:
-
-todo: 14534; done: 1729999 ..........
-todo: 11166; done: 1739999 .
-*)
-
-
-(* manual interactive testing ---------------------------------------- *)
-
-(*
-
-(* to test, we need to track the operations *)
-
-let initial_cache = Lru_in_mem_.initial_cache
-
-open Lru_in_mem_
-
-(* insert 8 elts *)
-
-let s0 = ref { cache=initial_cache; store=ST.initial_state }
-
-let run = Sem.run_ref s0
-
-let _ = 
-  for x = 1 to 8 do
-    run (Lru_in_mem_.insert x x)
-  done
-
-(* have a look at the state *)
-let _ = !s0 
-
-let _ = Map.bindings (!s0).cache.map
-
-let _ = run (Lru_in_mem_.insert 9 9)
-
-
-let _ = Map.bindings (!s0).cache.map
-let _ = Queue.bindings (!s0).cache.queue
-let _ = Map_int.bindings (!s0).store.map
-
-let _ = run (Lru_in_mem_.insert 3 3)
-
-let _ = run (Lru_in_mem_.insert 11 11)
-let _ = run (Lru_in_mem_.find 1|> bind (fun _ -> return ()))
-
-let _ = run (Lru_in_mem_.insert 12 12)
-
-
-*)
 
 

@@ -1,7 +1,11 @@
+(** The LRU operations, expressed using callbacks. This is somehow
+   more primitive than the monadic map interface. This interface is
+   converted into the typical monadic "syncable map" interface using
+   events. *)
+
 open Tjr_monad.Types
 open Persist_mode
 
-(* FIXME do we want eg find to take the callback to 'v option m? or add functionality to fulfil some promise, of type: 'a -> ('a,'t) m -> unit; or rather 'a -> ('a,'t) u -> (unit,'t) m; or can we just call async in the callback? *)
 
 (** The interface *provided* by the LRU, with callbacks *)
 type ('k,'v,'t) lru_callback_ops = {

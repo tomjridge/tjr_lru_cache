@@ -38,6 +38,10 @@ the pcache.
 open Tjr_monad.Types
 open Persist_mode
 open Lru_in_mem
+open Entry
+open Cache_state
+open Lru_callback_ops_type
+
 
 (* type for the async operation FIXME move to Tjr_monad *)
 
@@ -49,11 +53,6 @@ open Lru_in_mem
    shield the argument to async to avoid computation.  *)
 type 't async = (unit -> (unit,'t) m) -> (unit,'t) m 
 
-
-(* lru_callback_ops type  --------------------------------------- *)
-
-
-include Lru_callback_ops  
 
 
 (* lru state -------------------------------------------------------- *)
@@ -71,7 +70,7 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
    we can have a "suspend on" operation, and a "wakeup_all" operation,
    like lwt's task and bind *)
 
-include Msg
+open Msg_type
 
 (** The [lru_state] consists of:
 
@@ -91,14 +90,14 @@ NOTE Access to the lower layer is serialized. Messages are added to
 
 NOTE Access to the [lru_state] is serialized via [with_lru].  
 *)
-module Lru_state = struct
-type ('k,'v,'t) lru_state = { 
-  cache_state: ('k,'v) cache_state; 
-  blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
-  to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
-}
+module Lru_state_type = struct
+  type ('k,'v,'t) lru_state = { 
+    cache_state: ('k,'v) cache_state; 
+    blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
+    to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
+  }
 end
-include Lru_state
+include Lru_state_type
 
 
 (** NOTE the following, which essentially adds waiting threads to a
@@ -307,18 +306,20 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
 (** Construct the LRU callback-oriented interface *)
 let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
   make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
-  let open Lru_callback_ops in
+  let open Lru_callback_ops_type in
   {find;insert;delete;sync_key}
 
 
 
 (* implement non-callback interface --------------------------------- *)
 
+(** We now implement the standard (non-callback) interface, using events *)
+
 (** We assume that there is a way to "fulfill" an 'a m with an 'a  *)
 type 't event_ops = 't Tjr_monad.Event.event_ops 
 
 
-module Lru_ops = struct
+module Lru_ops_type = struct
 
 (** The interface provided by the LRU; provides blocking/non-blocking
    operations, and persist now/persist later flags. 
@@ -334,13 +335,13 @@ NOTE this interface doesn't allow "transaction" operations (multiple
 NOTE all calls are blocking; for non-blocking calls, launch an async
    light-weight thread. *)
 
-type ('k,'v,'t) lru_ops = {
-  find: 'k -> ('v option,'t) m; 
-  insert: mode -> 'k -> 'v -> (unit,'t) m;
-  delete: mode -> 'k -> (unit,'t) m;
-  sync_key: 'k -> (unit,'t) m;
-  sync_all_keys: unit -> (unit,'t) m;
-}
+  type ('k,'v,'t) lru_ops = {
+    find: 'k -> ('v option,'t) m; 
+    insert: mode -> 'k -> 'v -> (unit,'t) m;
+    delete: mode -> 'k -> (unit,'t) m;
+    sync_key: 'k -> (unit,'t) m;
+    sync_all_keys: unit -> (unit,'t) m;
+  }
 
 end
 
@@ -368,6 +369,6 @@ let make_lru_ops ~monad_ops ~event_ops ~callback_ops =
   let sync_all_keys () =
     failwith "FIXME TODO not implemented yet"
   in
-  let open Lru_ops in
+  let open Lru_ops_type in
   {find;insert;delete;sync_key;sync_all_keys}
   

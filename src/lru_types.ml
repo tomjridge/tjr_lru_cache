@@ -1,9 +1,9 @@
 
 include Persist_mode
-include Entry
-include Lru_in_mem.Cache_state
-include Lru_in_mem.Lru_in_mem_ops
-include Msg
-include Lru_multithreaded.Lru_state
-include Lru_callback_ops
-include Lru_multithreaded.Lru_ops
+include Entry.Types
+include Cache_state.Types
+include Lru_in_mem_ops_type
+include Msg_type
+include Lru_multithreaded.Lru_state_type
+include Lru_callback_ops_type
+include Lru_multithreaded.Lru_ops_type
