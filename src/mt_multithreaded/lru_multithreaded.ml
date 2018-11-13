@@ -40,7 +40,7 @@ open Persist_mode
 open Lru_in_mem
 open Entry
 open Cache_state
-open Lru_callback_ops_type
+open Mt_callback_ops_type
 
 
 (* type for the async operation FIXME move to Tjr_monad *)
@@ -306,7 +306,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
 (** Construct the LRU callback-oriented interface *)
 let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
   make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
-  let open Lru_callback_ops_type in
+  let open Mt_callback_ops_type in
   {find;insert;delete;sync_key}
 
 
@@ -318,32 +318,6 @@ let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
 (** We assume that there is a way to "fulfill" an 'a m with an 'a  *)
 type 't event_ops = 't Tjr_monad.Event.event_ops 
 
-
-module Lru_ops_type = struct
-
-(** The interface provided by the LRU; provides blocking/non-blocking
-   operations, and persist now/persist later flags. 
-
-These are the operations supported by the LRU.
-
-NOTE this interface doesn't allow "transaction" operations (multiple
-   ops, which commit atomically). This is sufficient for ImpFS - the
-   kv store is pointwise syncable not transactional. However, since
-   the lower level does support transactional operations, it seems
-   strange to limit the functionality here.
-
-NOTE all calls are blocking; for non-blocking calls, launch an async
-   light-weight thread. *)
-
-  type ('k,'v,'t) lru_ops = {
-    find: 'k -> ('v option,'t) m; 
-    insert: mode -> 'k -> 'v -> (unit,'t) m;
-    delete: mode -> 'k -> (unit,'t) m;
-    sync_key: 'k -> (unit,'t) m;
-    sync_all_keys: unit -> (unit,'t) m;
-  }
-
-end
 
 let make_lru_ops ~monad_ops ~event_ops ~callback_ops =
   let ( >>= ) = monad_ops.bind in 
@@ -369,6 +343,6 @@ let make_lru_ops ~monad_ops ~event_ops ~callback_ops =
   let sync_all_keys () =
     failwith "FIXME TODO not implemented yet"
   in
-  let open Lru_ops_type in
+  let open Mt_ops_type in
   {find;insert;delete;sync_key;sync_all_keys}
   

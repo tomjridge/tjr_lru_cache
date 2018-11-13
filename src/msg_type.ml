@@ -1,3 +1,5 @@
+(** The type of messages that we send to the lower level *)
+
 open Tjr_monad.Types
 open Entry
 
