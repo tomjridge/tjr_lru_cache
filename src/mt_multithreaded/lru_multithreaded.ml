@@ -90,14 +90,14 @@ NOTE Access to the lower layer is serialized. Messages are added to
 
 NOTE Access to the [lru_state] is serialized via [with_lru].  
 *)
-module Lru_state_type = struct
+module Mt_state_type = struct
   type ('k,'v,'t) lru_state = { 
     cache_state: ('k,'v) cache_state; 
     blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
     to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
   }
 end
-include Lru_state_type
+include Mt_state_type
 
 
 (** NOTE the following, which essentially adds waiting threads to a

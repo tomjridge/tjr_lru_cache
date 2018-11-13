@@ -4,6 +4,6 @@ include Entry.Types
 include Cache_state.Types
 include Lru_in_mem_ops_type
 include Msg_type
-include Lru_multithreaded.Lru_state_type
+include Lru_multithreaded.Mt_state_type
 include Mt_callback_ops_type
 include Mt_ops_type
