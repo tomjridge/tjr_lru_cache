@@ -112,10 +112,21 @@ let normalize c =
 
 (** Construct the initial cache using some relatively small values for
    [max_size] etc. *)
-let mk_initial_cache ~compare_k = {
+let mk_initial_cache ~max_size ~evict_count ~compare_k = {
+  max_size;
+  evict_count;
+  current_time=0;
+  cache_map=((Tjr_polymap.empty compare_k):('k,'v)Tjr_polymap.t);
+  queue=Queue.empty
+}
+
+
+(*
+let mk_initial_cache_4_2 ~compare_k = {
   max_size=4;
   evict_count=2;
   current_time=0;
   cache_map=((Tjr_polymap.empty compare_k):('k,'v)Tjr_polymap.t);
   queue=Queue.empty
 }
+*)

@@ -43,7 +43,10 @@ end
 
 open Test_state
 
-let init_cache = Im_cache_state.mk_initial_cache ~compare_k:Tjr_fs_shared.Int_.compare |> Im_cache_state.normalize
+let init_cache = 
+  Im_cache_state.mk_initial_cache 
+    ~max_size:4 ~evict_count:2 ~compare_k:Tjr_fs_shared.Int_.compare 
+  |> Im_cache_state.normalize
 
 let init_base_map = Map_int.empty
 

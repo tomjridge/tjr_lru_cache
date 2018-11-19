@@ -36,68 +36,15 @@ the pcache.
 
 
 open Tjr_monad.Types
-open Persist_mode
 open Lru_in_mem
-open Entry
-open Im_cache_state
-open Mt_callback_ops_type
+
+include Mt_types
 
 
-(* type for the async operation FIXME move to Tjr_monad *)
-
-(** The async operation completes with unit almost immediately; the
-   argument may be a long-running computation; it is scheduled for
-   execution.
-
-    Because even creating an 'a m in lwt schedules computation, we
-   shield the argument to async to avoid computation.  *)
-type 't async = (unit -> (unit,'t) m) -> (unit,'t) m 
 
 
 
 (* lru state -------------------------------------------------------- *)
-
-(* we want to store "blocked threads" in a map, indexed by key; we use
-   a polymap; the threads are of type 'v -> ('a,'t) m; the 'a return
-   type can just be unit, since a thread can launch some other thread
-   to eventually return 'a *)
-
-type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
-
-(* NOTE enqueue_to_lower needs to execute immediately; so we keep part
-   of the msg queue in the lru state; FIXME probably inefficient *)
-(* FIXME rather than have an explicit list of blocked threads, perhaps
-   we can have a "suspend on" operation, and a "wakeup_all" operation,
-   like lwt's task and bind *)
-
-open Msg_type
-
-(** The [lru_state] consists of:
-
-- the cache state
-
-- a map from k to a wait list (of threads that are waiting for a find
-   operation to complete at the disk layer)
-
-- a queue of messages (most recent first) to the lower level
-
-The lower "disk" layer is defined elsewhere. We just put messages on the list [to_lower], so these messages are the API.
-
-NOTE Access to the lower layer is serialized. Messages are added to
-   [to_lower] in order. There is another thread which takes messages
-   from [to_lower] (after taking the lru lock) and calls the lower
-   layer.
-
-NOTE Access to the [lru_state] is serialized via [with_lru].  
-*)
-module Mt_state_type = struct
-  type ('k,'v,'t) lru_state = { 
-    cache_state: ('k,'v) cache_state; 
-    blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
-    to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
-  }
-end
-include Mt_state_type
 
 
 (** NOTE the following, which essentially adds waiting threads to a
@@ -166,15 +113,6 @@ any) and mark it clean and flush to lower.
 
 *)
 
-type ('msg,'k,'v,'t) with_lru_ops = {
-  with_lru: 
-    'a. 
-      (lru:('k,'v,'t)lru_state -> 
-       set_lru:(('k,'v,'t)lru_state -> (unit,'t)m)
-       -> ('a,'t)m)
-    -> ('a,'t)m
-}
-
 let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
@@ -238,8 +176,8 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 in_mem_ops.sync_key k cache_state |> function
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
-                    assert(entry_type_is_dirty e.entry_type);
-                    (c,(Insert(k,v,callback)::to_lower)))
+                    assert(Entry.entry_type_is_dirty e.entry_type);
+                    (c,(Msg_type.Insert(k,v,callback)::to_lower)))
                 (* FIXME order or evictees vs insert? *))
             | Persist_later -> (cache_state,to_lower)
           in
@@ -264,8 +202,8 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 in_mem_ops.sync_key k cache_state |> function
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
-                    assert(entry_type_is_dirty e.entry_type);
-                    (c,(Delete(k,callback)::to_lower)))
+                    assert(Entry.entry_type_is_dirty e.entry_type);
+                    (c,(Msg_type.Delete(k,callback)::to_lower)))
                 (* FIXME order or evictees vs insert? *))
             | Persist_later -> (cache_state,to_lower)
           in
@@ -278,7 +216,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
         in_mem_ops.sync_key k lru.cache_state |> function
           | `Not_present -> async (callback)
           | `Present (e,cache_state) ->             
-            match entry_type_is_dirty e.entry_type with
+            match Entry.entry_type_is_dirty e.entry_type with
             | false -> 
               (* just return *)
               async (callback)
@@ -286,7 +224,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
               let to_lower =
                 match e.entry_type with
                 | Insert{value;dirty} ->
-                  (Insert(k,value,callback)::lru.to_lower)
+                  (Msg_type.Insert(k,value,callback)::lru.to_lower)
                 | Delete{dirty} -> 
                   (Delete(k,callback)::lru.to_lower)
                 | _ -> lru.to_lower
@@ -319,10 +257,10 @@ let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
 type 't event_ops = 't Tjr_monad.Event.event_ops 
 
 
-let make_lru_ops ~monad_ops ~event_ops ~callback_ops =
+let make_lru_ops ~monad_ops ~event_ops ~(callback_ops:('k,'v,'t)mt_callback_ops) =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
-  let {find;insert;delete;sync_key} = callback_ops in
+  let Mt_callback_ops_type.{find;insert;delete;sync_key} = callback_ops in
   let {ev_create=create;ev_signal=signal;ev_wait=wait} = event_ops in
   let find k = 
     create() >>= fun e ->

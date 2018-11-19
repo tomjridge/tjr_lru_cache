@@ -8,7 +8,7 @@ open Persist_mode
 
 
 (** The interface *provided* by the LRU, with callbacks *)
-type ('k,'v,'t) lru_callback_ops = {
+type ('k,'v,'t) mt_callback_ops = {
   find: 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
   insert: mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
   delete: mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;

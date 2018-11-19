@@ -16,7 +16,7 @@ NOTE this interface doesn't allow "transaction" operations (multiple
 NOTE all calls are blocking; for non-blocking calls, launch an async
    light-weight thread. *)
 
-type ('k,'v,'t) lru_ops = {
+type ('k,'v,'t) mt_ops = {
   find: 'k -> ('v option,'t) m; 
   insert: mode -> 'k -> 'v -> (unit,'t) m;
   delete: mode -> 'k -> (unit,'t) m;

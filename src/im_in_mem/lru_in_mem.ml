@@ -19,12 +19,10 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 *)
 
+include Im_types
+
 (** FIXME tests are enabled; disable for production *)
 let test f = f ()
-
-
-open Entry
-open Im_cache_state.Types
 
 
 
@@ -144,7 +142,7 @@ let make_cached_map () =
 
   (* NOTE entry_type is not Lower *)
   let perform k entry_type c = 
-    assert(not (is_Lower entry_type));
+    assert(not (Entry.is_Lower entry_type));
     let c = tick c in
     let e = 
       try 
@@ -181,7 +179,7 @@ let make_cached_map () =
     Tjr_polymap.find_opt k c.cache_map |> function
     | None -> `Not_present
     | Some e -> 
-      let e' = { e with entry_type=mark_clean e.entry_type} in
+      let e' = { e with entry_type=Entry.mark_clean e.entry_type} in
       Tjr_polymap.add k e' c.cache_map |> fun cache_map ->
       (* NOTE this returns the old entry *)
       `Present(e,{c with cache_map})
