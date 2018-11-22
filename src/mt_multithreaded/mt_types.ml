@@ -28,7 +28,7 @@ type ('v,'t) blocked_thread = 'v option -> (unit,'t)m
    we can have a "suspend on" operation, and a "wakeup_all" operation,
    like lwt's task and bind *)
 
-open Msg_type
+(* open Msg_type *)
 
 (** The [lru_state] consists of:
 
@@ -37,6 +37,9 @@ open Msg_type
 - a map from k to a wait list (of threads that are waiting for a find
    operation to complete at the disk layer)
 
+*)
+
+(* old !!!
 - a queue of messages (most recent first) to the lower level
 
 The lower "disk" layer is defined elsewhere. We just put messages on the list [to_lower], so these messages are the API.
@@ -48,17 +51,18 @@ NOTE Access to the lower layer is serialized. Messages are added to
 
 NOTE Access to the [lru_state] is serialized via [with_lru].  
 *)
+
 module Mt_state_type = struct
   type ('k,'v,'t) lru_state = { 
     cache_state: ('k,'v) cache_state; 
     blocked_threads: ('k,('v,'t) blocked_thread list) Tjr_polymap.t;
-    to_lower: ('k,'v,'t) msg list; (** NOTE in reverse order  *)
+    (* to_lower: ('k,'v,'t) msg list; (\** NOTE in reverse order  *\) *)
   }
 
   let mt_initial_state ~max_size ~evict_count ~compare_k = {
     cache_state=Im_cache_state.mk_initial_cache ~max_size ~evict_count ~compare_k; 
     blocked_threads=Tjr_polymap.empty compare_k;
-    to_lower=[]
+    (* to_lower=[] *)
   }
 
 end

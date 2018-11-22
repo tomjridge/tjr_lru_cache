@@ -37,9 +37,18 @@ the pcache.
 
 open Tjr_monad.Types
 open Lru_in_mem
+open Msg_type
 
 include Mt_types
 
+
+(* profiling -------------------------------------------------------- *)
+
+open Tjr_profile
+let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__
+let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true)
+
+let get_profiler_mark : (string -> int -> unit) ref = ref (fun s -> assert false)
 
 
 
@@ -67,7 +76,7 @@ let add_callback_on_key ~callback ~k ~lru =
     { lru with blocked_threads },`Need_to_call_lower
 
 (** NOTE this also removes all waiters on key k *)
-let process_callbacks_for_key ~monad_ops ~(async:'t async) ~k ~vopt_from_lower ~lru =
+let run_callbacks_for_key ~monad_ops ~(async:'t async) ~k ~vopt_from_lower ~lru =
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let blocked_threads = Tjr_polymap.find_opt k lru.blocked_threads in
@@ -113,24 +122,35 @@ any) and mark it clean and flush to lower.
 
 *)
 
-let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
+let make_lru_ops' ~monad_ops ~(async:'t async) ~with_lru_ops ~to_lower  =
+  let mark = !get_profiler_mark "mt_mark"  in  (* or fun i -> () *)
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
+  let maybe_to_lower = function
+    | None -> return ()
+    | Some msg -> to_lower msg
+  in
+  let evictees_to_msg_option = function
+    | None -> None
+    | Some [] -> failwith __LOC__  (* assume evictees are never [] *)
+    | Some es -> Some (Evictees es)
+  in
+  let maybe_evictees_to_lower es = maybe_to_lower (evictees_to_msg_option es) in
   let with_lru = with_lru_ops.with_lru in
-  let process_callbacks_for_key = process_callbacks_for_key ~monad_ops ~async in
+  let run_callbacks_for_key = run_callbacks_for_key ~monad_ops ~async in
   let in_mem_ops = make_lru_in_mem() in
   let find k (callback:'v option -> (unit,'t) m) = 
     with_lru (fun ~lru ~set_lru -> 
         (* check if k is already in the cache *)
         in_mem_ops.find k lru.cache_state |> function
-        | `In_cache e -> 
+        | `In_cache e -> (
           let vopt = 
             match e.entry_type with
             | Insert i -> (Some i.value)
             | Delete _ -> None
             | Lower vopt -> vopt
           in
-          async (fun () -> callback vopt)
+          async (fun () -> callback vopt))
         (* FIXME note the callback should not do computation on
            receiving an argument... it must wait for the world state
            *)
@@ -146,30 +166,27 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
               let callback vopt_from_lower : (unit,'t)m =                    
                 with_lru (fun ~lru ~set_lru -> 
                     (* first wake up sleeping threads *)
-                    process_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
+                    run_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
                     kk ~vopt_from_lower ~cache_state:lru.cache_state 
                     |> fun (vopt,`Evictees es, `Cache_state cache_state) -> 
                     (* have to handle evictees by flushing to lower *)
-                    match es with 
-                    | None -> set_lru {lru with cache_state}
-                    | Some es -> 
-                      set_lru {lru with cache_state; 
-                                        to_lower=(Evictees es)::lru.to_lower })
+                    maybe_evictees_to_lower es >>= fun () ->
+                    set_lru {lru with cache_state })
               in
-              set_lru { lru with to_lower=Find(k,callback)::lru.to_lower }))
+              to_lower (Find(k,callback))))
   in
 
   let insert mode k v (callback: unit -> (unit,'t)m) =
     with_lru (fun ~lru ~set_lru -> 
+        assert(mark P.ab;true);
         in_mem_ops.insert k v lru.cache_state 
         |> function (`Evictees es, `Cache_state cache_state) ->
-          (* update lru with evictees *)
-          let to_lower = 
-            match es with 
-            | None -> lru.to_lower
-            | Some es -> (Evictees es)::lru.to_lower
-          in
+          assert(mark P.bc;true);        
+          (match es with
+           | None -> return ()
+           | Some es -> to_lower (Evictees es)) >>= fun () ->
           (* handle mode=persist_now, cache_state *)
+          assert(mark P.cd;true);        
           let cache_state,to_lower = 
             match mode with
             | Persist_now -> (
@@ -177,11 +194,14 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
                     assert(Entry.entry_type_is_dirty e.entry_type);
-                    (c,(Msg_type.Insert(k,v,callback)::to_lower)))
-                (* FIXME order or evictees vs insert? *))
-            | Persist_later -> (cache_state,to_lower)
+                    (c,Some(Insert(k,v,callback)))))
+            (* FIXME order or evictees vs insert? *)
+            | Persist_later -> (cache_state,None)
           in
-          set_lru {lru with cache_state; to_lower}) >>= fun () ->
+          maybe_to_lower to_lower >>= fun () ->
+          assert(mark P.de;true);        
+          set_lru {lru with cache_state}) >>= fun () ->
+    assert(mark P.ef;true);        
     (if mode=Persist_later then async(callback) else return ())
   in
   
@@ -190,11 +210,7 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
         in_mem_ops.delete k lru.cache_state 
         |> function (`Evictees es, `Cache_state cache_state) ->
           (* update lru with evictees *)
-          let to_lower = 
-            match es with 
-            | None -> lru.to_lower
-            | Some es -> (Evictees es)::lru.to_lower
-          in
+          maybe_evictees_to_lower es >>= fun () ->
           (* handle mode=persist_now, cache_state *)
           let cache_state,to_lower = 
             match mode with
@@ -203,11 +219,12 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
                 | `Not_present -> failwith "impossible"
                 | `Present (e,c) -> (
                     assert(Entry.entry_type_is_dirty e.entry_type);
-                    (c,(Msg_type.Delete(k,callback)::to_lower)))
+                    (c,Some(Delete(k,callback))))
                 (* FIXME order or evictees vs insert? *))
-            | Persist_later -> (cache_state,to_lower)
+            | Persist_later -> (cache_state,None)
           in
-          set_lru {lru with cache_state; to_lower}) >>= fun () ->
+          maybe_to_lower to_lower >>= fun () ->
+          set_lru {lru with cache_state}) >>= fun () ->
     (if mode=Persist_later then async(callback) else return ())
   in
 
@@ -223,15 +240,12 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
             | true -> 
               let to_lower =
                 match e.entry_type with
-                | Insert{value;dirty} ->
-                  (Msg_type.Insert(k,value,callback)::lru.to_lower)
-                | Delete{dirty} -> 
-                  (Delete(k,callback)::lru.to_lower)
-                | _ -> lru.to_lower
+                | Insert{value;dirty} -> Some(Insert(k,value,callback))
+                | Delete{dirty} -> Some(Delete(k,callback))
+                | _ -> None
               in
-              set_lru {lru with cache_state; to_lower}
-
-      )
+              maybe_to_lower to_lower >>= fun () ->
+              set_lru {lru with cache_state})
   in
   fun kk -> kk ~find ~insert ~delete ~sync_key
   
@@ -242,8 +256,8 @@ let make_lru_ops' ~monad_ops ~with_lru_ops ~(async:'t async) =
 (* open Lru_interface *)
 
 (** Construct the LRU callback-oriented interface *)
-let make_lru_callback_ops ~monad_ops ~with_lru_ops ~async =
-  make_lru_ops' ~monad_ops ~with_lru_ops ~async @@ fun ~find ~insert ~delete ~sync_key -> 
+let make_lru_callback_ops ~monad_ops ~async ~with_lru_ops ~to_lower =
+  make_lru_ops' ~monad_ops ~async ~with_lru_ops ~to_lower @@ fun ~find ~insert ~delete ~sync_key -> 
   let open Mt_callback_ops_type in
   {find;insert;delete;sync_key}
 

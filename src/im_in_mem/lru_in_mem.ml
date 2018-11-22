@@ -26,6 +26,15 @@ let test f = f ()
 
 
 
+(* profiling -------------------------------------------------------- *)
+
+open Tjr_profile
+let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__
+let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true)
+
+let get_profiler_mark : (string -> int -> unit) ref = ref (fun s -> assert false)
+
+
 (* find_in_cache, get_evictees  --------------------------------- *)
 
 
@@ -59,38 +68,6 @@ let _ = find_in_cache
 (** An exception, for quick abort. FIXME remove *)
 exception E_
 
-(** Returns None if no evictees need to be flushed, or Some(evictees)
-   otherwise *)
-let get_evictees (c:('k,'v)cache_state) = 
-  let card = Tjr_polymap.cardinal c.cache_map in
-  match card > c.max_size with (* FIXME inefficient *)
-  | false -> (None,c)
-  | true -> 
-    (* how many to evict? *)
-    let n = c.evict_count in
-    (* for non-dirty, we just remove from map; for dirty we
-       must flush to lower *)
-    let count = ref 0 in
-    let evictees = ref [] in
-    let queue = ref c.queue in  
-    let cache_map = ref c.cache_map in
-    begin 
-      try 
-        Queue.iter 
-          (fun time k -> 
-             queue:=Queue.remove time !queue;
-             evictees:=(k,Tjr_polymap.find k c.cache_map)::!evictees;
-             cache_map:=Tjr_polymap.remove k !cache_map;
-             count:=!count +1;
-             if !count >= n then raise E_ else ())
-          c.queue
-      with E_ -> ()
-    end;
-    (* now we have evictees, new queue, and new map *)
-    let c = {c with cache_map=(!cache_map); queue=(!queue)} in
-    (Some (!evictees),c)
-    
-let _ = get_evictees
 
 
 
@@ -107,6 +84,53 @@ NOTE the idea for [find] is that we execute a quick step to handle the
 
 *)
 let make_cached_map () =
+
+  let mark = !get_profiler_mark "lru_in_mem" in
+
+
+
+  (* Returns None if no evictees need to be flushed, or Some(evictees)
+      otherwise *)
+  let get_evictees = 
+    let mark = !get_profiler_mark "get_evictees" in
+
+    let get_evictees (c:('k,'v)cache_state) = 
+      assert(mark P.ab; true);
+      let card = Tjr_polymap.cardinal c.cache_map in
+      assert(mark P.bc; true);
+      match card > c.max_size with (* FIXME inefficient *)
+      | false -> (None,c)
+      | true -> 
+        (* how many to evict? *)
+        let n = c.evict_count in
+        (* for non-dirty, we just remove from map; for dirty we
+           must flush to lower *)
+        let count = ref 0 in
+        let evictees = ref [] in
+        let queue = ref c.queue in  
+        let cache_map = ref c.cache_map in
+        begin 
+          try 
+            Queue.iter 
+              (fun time k -> 
+                 queue:=Queue.remove time !queue;
+                 evictees:=(k,Tjr_polymap.find k c.cache_map)::!evictees;
+                 cache_map:=Tjr_polymap.remove k !cache_map;
+                 count:=!count +1;
+                 if !count >= n then raise E_ else ())
+              c.queue
+          with E_ -> ()
+        end;
+        (* now we have evictees, new queue, and new map *)
+        let c = {c with cache_map=(!cache_map); queue=(!queue)} in
+        assert(mark P.cd; true);
+        (Some (!evictees),c)
+    in
+    get_evictees
+
+  in
+
+
 
   (* NOTE that if find pulls an entry into the cache, we may have to
        get rid of evictees; so a read causes a write; but this should be
@@ -142,6 +166,7 @@ let make_cached_map () =
 
   (* NOTE entry_type is not Lower *)
   let perform k entry_type c = 
+    assert(mark P.ab; true);
     assert(not (Entry.is_Lower entry_type));
     let c = tick c in
     let e = 
@@ -149,19 +174,24 @@ let make_cached_map () =
         Some (Tjr_polymap.find k c.cache_map)
       with Not_found -> None 
     in
+    assert(mark P.bc; true);
     let e' = {entry_type; atime=c.current_time } in
     (* new entry in cache_map *)
     let c = {c with cache_map=(Tjr_polymap.add k e' c.cache_map) } in
     (* maybe remove existing entry from queue *)
+    assert(mark P.cd; true);
     let c = 
       match e with
       | None -> c
       | Some e -> 
         {c with queue=(Queue.remove e.atime c.queue) } 
     in
+    assert(mark P.de; true);
     (* add new entry *)
     let c = {c with queue=(Queue.add e'.atime k c.queue) } in
+    assert(mark P.ef; true);
     get_evictees c |> fun (es,c) -> 
+    assert(mark P.fg; true);
     (`Evictees es, `Cache_state c)
   in
 
