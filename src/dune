@@ -1,7 +1,7 @@
 (library
   (name tjr_lru_cache)
   (public_name tjr_lru_cache)
-  (inline_tests)  ; FIXME disable for production?
+;  (inline_tests)  ; FIXME disable for production?
   (libraries tjr_polymap tjr_monad tjr_fs_shared tjr_profile))
 
 (include_subdirs unqualified)

@@ -48,7 +48,6 @@ open Tjr_profile
 let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__
 let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true)
 
-let get_profiler_mark : (string -> int -> unit) ref = ref (fun s -> assert false)
 
 
 
@@ -123,7 +122,6 @@ any) and mark it clean and flush to lower.
 *)
 
 let make_lru_ops' ~monad_ops ~(async:'t async) ~with_lru_ops ~to_lower  =
-  let mark = !get_profiler_mark "mt_mark"  in  (* or fun i -> () *)
   let ( >>= ) = monad_ops.bind in 
   let return = monad_ops.return in
   let maybe_to_lower = function
@@ -175,6 +173,8 @@ let make_lru_ops' ~monad_ops ~(async:'t async) ~with_lru_ops ~to_lower  =
               in
               to_lower (Find(k,callback))))
   in
+
+  let mark = get_mark ~name:"mt_insert"  in 
 
   let insert mode k v (callback: unit -> (unit,'t)m) =
     with_lru (fun ~lru ~set_lru -> 

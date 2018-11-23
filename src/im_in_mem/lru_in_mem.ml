@@ -32,7 +32,6 @@ open Tjr_profile
 let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__
 let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true)
 
-let get_profiler_mark : (string -> int -> unit) ref = ref (fun s -> assert false)
 
 
 (* find_in_cache, get_evictees  --------------------------------- *)
@@ -85,51 +84,44 @@ NOTE the idea for [find] is that we execute a quick step to handle the
 *)
 let make_cached_map () =
 
-  let mark = !get_profiler_mark "lru_in_mem" in
-
-
 
   (* Returns None if no evictees need to be flushed, or Some(evictees)
       otherwise *)
-  let get_evictees = 
-    let mark = !get_profiler_mark "get_evictees" in
+  let mark = get_mark ~name:"lru_in_mem.get_evictees" in
 
-    let get_evictees (c:('k,'v)cache_state) = 
-      assert(mark P.ab; true);
-      let card = Tjr_polymap.cardinal c.cache_map in
-      assert(mark P.bc; true);
-      match card > c.max_size with (* FIXME inefficient *)
-      | false -> (None,c)
-      | true -> 
-        (* how many to evict? *)
-        let n = c.evict_count in
-        (* for non-dirty, we just remove from map; for dirty we
-           must flush to lower *)
-        let count = ref 0 in
-        let evictees = ref [] in
-        let queue = ref c.queue in  
-        let cache_map = ref c.cache_map in
-        begin 
-          try 
-            Queue.iter 
-              (fun time k -> 
-                 queue:=Queue.remove time !queue;
-                 evictees:=(k,Tjr_polymap.find k c.cache_map)::!evictees;
-                 cache_map:=Tjr_polymap.remove k !cache_map;
-                 count:=!count +1;
-                 if !count >= n then raise E_ else ())
-              c.queue
-          with E_ -> ()
-        end;
-        (* now we have evictees, new queue, and new map *)
-        let c = {c with cache_map=(!cache_map); queue=(!queue)} in
-        assert(mark P.cd; true);
-        (Some (!evictees),c)
-    in
-    get_evictees
-
+  let get_evictees (c:('k,'v)cache_state) = 
+    assert(mark P._EMPTY; true);
+    assert(mark P.ab; true);
+    let card = Tjr_polymap.cardinal c.cache_map in
+    assert(mark P.bc; true);
+    match card > c.max_size with (* FIXME inefficient *)
+    | false -> (None,c)
+    | true -> 
+      (* how many to evict? *)
+      let n = c.evict_count in
+      (* for non-dirty, we just remove from map; for dirty we
+         must flush to lower *)
+      let count = ref 0 in
+      let evictees = ref [] in
+      let queue = ref c.queue in  
+      let cache_map = ref c.cache_map in
+      begin 
+        try 
+          Queue.iter 
+            (fun time k -> 
+               queue:=Queue.remove time !queue;
+               evictees:=(k,Tjr_polymap.find k c.cache_map)::!evictees;
+               cache_map:=Tjr_polymap.remove k !cache_map;
+               count:=!count +1;
+               if !count >= n then raise E_ else ())
+            c.queue
+        with E_ -> ()
+      end;
+      (* now we have evictees, new queue, and new map *)
+      let c = {c with cache_map=(!cache_map); queue=(!queue)} in
+      assert(mark P.cd; true);
+      (Some (!evictees),c)
   in
-
 
 
   (* NOTE that if find pulls an entry into the cache, we may have to
@@ -164,9 +156,11 @@ let make_cached_map () =
   (* FIXME TODO we need to also handle the cases where we flush to
      lower immediately *)
 
+  let mark = get_mark ~name:"lru_in_mem.perform" in
+
   (* NOTE entry_type is not Lower *)
   let perform k entry_type c = 
-    assert(mark P.ab; true);
+    assert(mark P._EMPTY; true);
     assert(not (Entry.is_Lower entry_type));
     let c = tick c in
     let e = 
