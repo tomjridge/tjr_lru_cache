@@ -1,8 +1,9 @@
 (** Tests for the in-mem cache ---------------------------------- *)
 
-open Tjr_fs_shared
+(* open Tjr_fs_shared *)
 open Entry.Types
 
+module Map_int = Tjr_map.Map_int
 
 (* we test just cache behaviour, not linked with btree *)
 
@@ -45,7 +46,7 @@ open Test_state
 
 let init_cache = 
   Im_cache_state.mk_initial_cache 
-    ~max_size:4 ~evict_count:2 ~compare_k:Tjr_fs_shared.Int_.compare 
+    ~max_size:4 ~evict_count:2 ~compare_k:Tjr_int.compare 
   |> Im_cache_state.normalize
 
 let init_base_map = Map_int.empty

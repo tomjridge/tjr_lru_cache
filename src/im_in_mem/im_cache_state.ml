@@ -12,7 +12,7 @@ let test f = f ()
 module Types = struct
 
 
-  module Map_int = Tjr_fs_shared.Map_int
+  module Map_int = Tjr_map.Map_int
 
   (** We maintain a queue as a map from time to key that was accessed at
       that time. *)
