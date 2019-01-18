@@ -14,8 +14,6 @@ bug-reports: "https://github.com/tomjridge/tjr_lru_cache/issues"
 
 depends: [
   "tjr_profile"
-  "tjr_polymap"
-  "tjr_monad"
   "tjr_fs_shared"
 ]
 
