@@ -38,6 +38,7 @@ the pcache.
 open Tjr_monad.Types
 open Lru_in_mem
 open Msg_type
+open Persist_mode
 
 include Mt_types
 

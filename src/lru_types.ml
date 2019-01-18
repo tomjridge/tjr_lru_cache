@@ -1,4 +1,6 @@
 
+include Persist_mode
+
 (* im types *)
 
 include Im_types
