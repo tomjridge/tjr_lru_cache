@@ -4,7 +4,7 @@ To support blocking/non-blocking modes, we can optionally provide a callback fun
 
 The following are developer notes.
 
-{1 Sync behaviour }
+{2 Sync behaviour }
 
 Our main use for this module is as a frontend to an uncached KV store
 (see tjr_kv). 
@@ -27,7 +27,7 @@ end
 
 ]}
 
-{1 Concurrency}
+{2 Concurrency}
 
 This API is expected to be used by many threads. In particular, for [sync_key] we may have the following actions:
 
@@ -45,7 +45,7 @@ Similarly, for [sync_all_keys]:
 Thread A's call to [sync_all_keys] may result in [(k,v')] rather than [(k,v)].
 
 
-{1 Non-blocking design}
+{2 Non-blocking design}
 
 We want sync operations to be non-blocking.
 
@@ -77,7 +77,7 @@ transactions but only one that can write. Once a single read-write
 transaction is opened, all further attempts to begin one will block
 until the first one is committed or aborted."
 
-{1 Consumed API}
+{2 Consumed API}
 
 The LRU provides a "syncable/blocking" map API.
 
@@ -100,7 +100,7 @@ or use some simpler mechanism (callback or mbox var). Probably best to
 use a simple callback.
 
 
-{1 Marking entries clean}
+{2 Marking entries clean}
 
 On a [sync_all_keys call], we can dispatch to the lower layer, and mark
 all entries clean at that point, without waiting for the return. We
