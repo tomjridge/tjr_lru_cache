@@ -86,6 +86,8 @@ module Cache_state = struct
 NOTE the [queue] field allows to identify the least recently used without
 walking the entire map.
 
+NOTE the ['k_map] parameter is a map from k to v entry
+
 *)
   type ('k,'v,'k_map) cache_state = {  
     max_size: int;

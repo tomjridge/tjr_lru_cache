@@ -1,8 +1,5 @@
 (** Tests for the in-mem cache ---------------------------------- *)
 
-(* open Tjr_fs_shared *)
-open Entry.Types
-
 
 (* we test just cache behaviour, not linked with btree *)
 
@@ -15,16 +12,23 @@ type key = int
 type value = int
 type op = Find of key | Insert of key * value | Delete of key
 
+let k_cmp : int -> int -> int = Pervasives.compare
+
+open Tjr_map
+let make_map_ops () = Tjr_map.make_map_ops k_cmp
+
 
 module Test_state = struct 
-  open Im_cache_state
-  
   (* the spec state is the combined view of the cache and the base map ? *)
   type spec_state = int Map_int.t
 
+
+  type kve_map = (key,value entry,unit)map
+  let k_ve_map_ops : (key,value entry,kve_map)map_ops = make_map_ops ()
+
   type t = {
     spec: spec_state;
-    cache: (key,value)cache_state;
+    cache: (key,value,kve_map)cache_state;
     base_map: int Map_int.t;
   }
 
@@ -44,9 +48,12 @@ end
 open Test_state
 
 let init_cache = 
-  Im_cache_state.mk_initial_cache 
-    ~max_size:4 ~evict_count:2 ~compare_k:Tjr_int.compare 
+  Im_cache_state.mk_initial_cache
+    ~max_size:4 ~evict_count:2 
+    ~cache_map_ops:k_ve_map_ops
   |> Im_cache_state.normalize
+
+let _ : (value, value, kve_map) cache_state = init_cache
 
 let init_base_map = Map_int.empty
 
@@ -62,9 +69,8 @@ let base_find_opt k = fun t ->
   Map_int.find_opt k t
   
 
-let (find,insert,delete) = 
-  Lru_in_mem.make_cached_map () @@
-  fun ~find ~insert ~delete ~sync_key -> (find,insert,delete)
+let Lru_in_mem_ops.{find; insert; delete; _ } = 
+  make_lru_in_mem ()
 
 (* we modify find so that it utilises the base map *)
 
@@ -76,21 +82,23 @@ let _ = insert
    evictees; here we simply flush to lower FIXME might be best to
    phrase this all in a monad *)
 
-let merge_evictees_with_base_map (es:(key*value entry)list option) m =
+let merge_evictees_with_base_map (es:(key*value entry)list option) (m:int Map_int.t) =
   match es with
   | None -> m
   | Some es -> 
     (* Printf.printf "Merging evictees..."; *)
-    Tjr_list.with_each_elt
-      ~list:es
-      ~step:(fun ~state (k,e) ->
+    (es,m) |> 
+    List_.iter_opt (function
+        | ([],m) -> None
+        | (k,e)::es,m -> 
           match e.entry_type with
-          | Insert { value; dirty=true } -> Map_int.add k value state
-          | Insert { value; dirty=false } -> state 
-          | Delete { dirty=true } -> Map_int.remove k state
-          | Delete { dirty=false } -> state
-          | Lower vopt -> state)
-      ~init:m
+          | Insert { value; dirty=true } -> Some (es,Map_int.add k value m)
+          | Insert { value; dirty=false } -> Some (es,m) 
+          | Delete { dirty=true } -> Some(es,Map_int.remove k m)
+          | Delete { dirty=false } -> Some(es,m)
+          | Lower vopt -> Some(es,m))
+    |> function ([],m) -> m[@@ocaml.warning "-8"]
+
 
 let find k t = 
   find k t.cache |> function
@@ -124,7 +132,7 @@ let _ : key -> t -> t = delete
 
 (* we use module Exhaustive *)
 
-open Tjr_exhaustive_testing
+open Exhaustive_testing
 
 let step t op =
   begin
@@ -158,28 +166,14 @@ let step t op =
    we already check internal invariants of course
 *)
 
-let check_state x = (Im_cache_state.wf x.cache) (* FIXME TODO *)
+let check_state x = assert(Im_cache_state.wf x.cache) (* FIXME TODO *)
 let check_step x op y = () (* FIXME TODO *)
 
-let test_ops = { step; check_state; check_step }
-
-
-(* sets of states --------------------------------------------------- *)
-
-module Ord = struct 
-  type t = Test_state.t
-  let compare (x:t) (y:t) = Test_state.compare x y
-end
-
-module Set_ops = Tjr_set.Make(Ord)
-
-let set_ops = Set_ops.set_ops
+let cmp = Test_state.compare
+(* let test_ops = { step; check_state; check_step } *)
 
 
 (* running exhaustive tests ---------------------------------------- *)
-
-(* let range = BatList.(range 1 `To 5) *)
-
 
 let test range =
   let ops =
@@ -188,7 +182,7 @@ let test range =
     |> List.concat
   in
   Printf.printf "%s: " __MODULE__;
-  test ~set_ops ~test_ops ~ops ~init_states:[initial_state];
+  test ~cmp ~step ~check_state ~check_step ~ops ~init_states:[initial_state];
   print_string "\n\n";
 
 

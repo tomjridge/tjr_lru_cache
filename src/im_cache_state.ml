@@ -46,7 +46,7 @@ let wf c =
   assert (Queue.cardinal c.queue <= c.max_size);
   assert (c.cache_map_ops.cardinal c.cache_map = Queue.cardinal c.queue);
   c.cache_map_ops.iter (fun k entry -> assert(Queue.find entry.atime c.queue = k)) c.cache_map;
-  ()
+  true
   
 (** For testing, we typically need to normalize wrt. time *)
 let normalize c =

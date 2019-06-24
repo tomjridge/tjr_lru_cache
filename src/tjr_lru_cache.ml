@@ -6,6 +6,8 @@
 
 module Im_intf = Im_intf
 
+module Im_cache_state = Im_cache_state
+
 include Im_intf.Lru_in_mem_ops
 
 include Lru_in_mem
