@@ -1,2 +1,4 @@
 (env
   (dev (flags (:standard -w -26-27))))
+
+(ignored_subdirs (test))

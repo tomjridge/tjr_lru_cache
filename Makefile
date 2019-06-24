@@ -1,29 +1,10 @@
-DUNE:=opam exec dune
+TMP_DOC_DIR:=/tmp/tjr_lru_cache
+scratch:=/tmp/l/github/scratch
 
-build:
-	$(DUNE) build @install
-	$(DUNE) build test/test_main.exe
+default: all
 
-install:
-	$(DUNE) install
+-include Makefile.ocaml
 
-clean:
-	$(DUNE) clean
+# for auto-completion of Makefile target
+clean::
 
-
-doc: FORCE
-	$(DUNE) build @doc
-
-view_doc:
-	google-chrome  _build/default/_doc/_html/index.html
-
-
-run_tests:
-	$(DUNE) exec test/test_main.exe 1 5
-
-# run_more_tests:
-# 	$(DUNE) exec test/test_main.exe 1 10
-
-
-
-FORCE:

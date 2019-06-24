@@ -4,4 +4,7 @@
 ;  (inline_tests)  ; FIXME disable for production?
   (libraries tjr_monad tjr_profile tjr_fs_shared))
 
+(env
+  (_ (flags (:standard -open Tjr_lib -open Tjr_monad -open Tjr_fs_shared))))
+
 (include_subdirs unqualified)

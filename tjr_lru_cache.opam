@@ -1,14 +1,15 @@
-opam-version: "2.0"
-name: "tjr_lru_cache"
-version: "0.0.1"
+opam-version : "2.0"
+name         : "tjr_lru_cache"
+version      : "0.0.1"
+synopsis     : "LRU cache for ImpFS"
 
 # ----------------------------------------------------------------------
 
-authors: "Tom Ridge <tom.j.ridge@googlemail.com>"
-maintainer: "Tom Ridge <tom.j.ridge@googlemail.com>"
-homepage: "https://github.com/tomjridge/tjr_lru_cache"
-bug-reports: "https://github.com/tomjridge/tjr_lru_cache/issues"
-# dev-repo: "https://github.com/tomjridge/tjr_lru_cache.git"
+authors      : "Tom Ridge <tom.j.ridge@googlemail.com>"
+maintainer   : "Tom Ridge <tom.j.ridge@googlemail.com>"
+homepage     : "https://github.com/tomjridge/tjr_lru_cache"
+bug-reports  : "https://github.com/tomjridge/tjr_lru_cache/issues"
+dev-repo     : "https://github.com/tomjridge/tjr_lru_cache.git"
 
 # ----------------------------------------------------------------------
 
