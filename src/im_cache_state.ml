@@ -71,16 +71,20 @@ let normalize c =
 
 
 (** Construct the initial cache using some relatively small values for
-   [max_size] etc. *)
-let mk_initial_cache ~max_size ~evict_count ~cache_map_ops = {
-  max_size;
-  evict_count;
-  current_time=0;
-  cache_map_ops;
-  cache_map=cache_map_ops.empty;
-  queue=Queue.empty
-}
+    [max_size] etc. *)
+let mk_initial_cache ~max_size ~evict_count ~compare_k = 
+  let cache_map_ops :('k,'v,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = Tjr_map.make_map_ops compare_k in
+  {
+    max_size;
+    evict_count;
+    current_time=0;
+    cache_map_ops;
+    cache_map=cache_map_ops.empty;
+    queue=Queue.empty
+  }
 
+
+let _ = mk_initial_cache
 
 (*
 let mk_initial_cache_4_2 ~compare_k = {

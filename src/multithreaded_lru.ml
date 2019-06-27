@@ -299,6 +299,8 @@ module Internal2 = struct
 
 end
 
+let make_lru_callback_ops = Internal2.make_lru_callback_ops
+
 let make_lru_ops : monad_ops:'t monad_ops ->
 event_ops:'t Event.event_ops ->
 callback_ops:('k, 'v, 't) Mt_callback_ops.mt_callback_ops ->

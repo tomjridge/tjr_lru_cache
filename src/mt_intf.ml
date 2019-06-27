@@ -120,14 +120,25 @@ NOTE Access to the [lru_state] is serialized via [with_lru].
     blocked_threads: 't_map;
     blocked_threads_ops:('k,('v,'t)blocked_thread list,'t_map)Tjr_map.map_ops
   }
+  
+  let mt_initial_state ~max_size ~evict_count ~compare_k = 
+    let cache_state = Im_cache_state.mk_initial_cache ~max_size ~evict_count ~compare_k in
+    let blocked_threads_ops : ('k,('v,'t)blocked_thread list,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = 
+      Tjr_map.make_map_ops compare_k in
+    {
+      cache_state; 
+      blocked_threads=blocked_threads_ops.empty;
+      blocked_threads_ops;
+    }
 
-(*
-  let mt_initial_state ~max_size ~evict_count ~compare_k = {
-    cache_state=Im_cache_state.mk_initial_cache ~max_size ~evict_count ~compare_k; 
-    blocked_threads=Poly_map.empty compare_k;
-    (* to_lower=[] *)
-  }
-*)
+  let _ :
+max_size:int ->
+evict_count:int ->
+compare_k:('k -> 'k -> int) ->
+('k, 'v, ('k, 'v entry, unit) Tjr_map.map,
+ ('k, ('v, 't) blocked_thread list, unit) Tjr_map.map, 't)
+lru_state
+= mt_initial_state
 
   type ('msg,'k,'v,'k_map,'t_map,'t) with_lru_ops = {
     with_lru: 
