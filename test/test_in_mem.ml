@@ -50,7 +50,8 @@ open Test_state
 let init_cache = 
   Im_cache_state.mk_initial_cache
     ~max_size:4 ~evict_count:2 
-    ~cache_map_ops:k_ve_map_ops
+    (* ~cache_map_ops:k_ve_map_ops *)
+    ~compare_k:Pervasives.compare (* FIXME pervasives.compare *)
   |> Im_cache_state.normalize
 
 let _ : (value, value, kve_map) cache_state = init_cache
