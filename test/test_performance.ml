@@ -1,7 +1,7 @@
 (* open Lru *)
-open Tjr_profile_with_core
+(* open Tjr_profile_with_core *)
 
-let prof = make_string_profiler ()
+let prof = Tjr_profile.make_string_profiler ()
 
 module W = struct type t = int let weight: t->int = fun _ -> 1 end
 

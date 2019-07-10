@@ -41,7 +41,9 @@ open Mt_intf
 
 (* profiling -------------------------------------------------------- *)
 
-open Tjr_profile.Util.Profiler
+let profiler = ref Tjr_profile.dummy_profiler
+               |> Global.register ~name:"Multithreaded_lru profiler"
+
 
 (* let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__ *)
 (* let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true) *)
@@ -120,6 +122,7 @@ module Internal2 = struct
   *)
 
   let make_lru_ops' ~monad_ops ~(async:'t async) ~with_lru_ops ~to_lower  =
+    let mark = !profiler.mark in
     let ( >>= ) = monad_ops.bind in 
     let return = monad_ops.return in
     let maybe_to_lower = function

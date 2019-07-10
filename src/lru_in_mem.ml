@@ -21,17 +21,17 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 open Im_intf
 
+
+
+let profiler = ref Tjr_profile.dummy_profiler
+               |> Global.register ~name:"Lru_in_mem profiler"
+
 module Internal = struct
 
   (** FIXME tests are enabled; disable for production *)
   let test f = f ()
 
   (* module Poly_map = Tjr_map.With_pervasives_compare (\* FIXME placeholder *\) *)
-
-
-  (* profiling -------------------------------------------------------- *)
-
-  open Tjr_profile.Util.Profiler
 
 
   (* find_in_cache, get_evictees  --------------------------------- *)
@@ -85,7 +85,7 @@ module Internal = struct
   *)
   let make_cached_map () =
 
-
+    let mark = !profiler.mark in
     (* Returns None if no evictees need to be flushed, or Some(evictees)
         otherwise *)
     (* let mark = get_mark ~name:"lru_in_mem.get_evictees" in *)
