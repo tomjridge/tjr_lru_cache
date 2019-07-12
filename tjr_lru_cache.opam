@@ -16,6 +16,7 @@ dev-repo     : "https://github.com/tomjridge/tjr_lru_cache.git"
 depends: [
   "tjr_profile_with_core"
   "tjr_fs_shared"
+  "containers"  # for testing
 ]
 
 # ----------------------------------------------------------------------

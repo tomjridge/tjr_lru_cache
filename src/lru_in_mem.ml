@@ -22,9 +22,8 @@ NOTE that the operations occur not in a monad - instead, explicit
 open Im_intf
 
 
-
-let profiler = ref Tjr_profile.dummy_profiler
-               |> Global.register ~name:"Lru_in_mem profiler"
+module Profiler = Make_profiler()
+open Profiler
 
 module Internal = struct
 
@@ -85,7 +84,6 @@ module Internal = struct
   *)
   let make_cached_map () =
 
-    let mark = !profiler.mark in
     (* Returns None if no evictees need to be flushed, or Some(evictees)
         otherwise *)
     (* let mark = get_mark ~name:"lru_in_mem.get_evictees" in *)
