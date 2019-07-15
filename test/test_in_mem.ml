@@ -12,7 +12,9 @@ type key = int
 type value = int
 type op = Find of key | Insert of key * value | Delete of key
 
-let k_cmp : int -> int -> int = Pervasives.compare
+let compare_ints : int -> int -> int = Pervasives.compare
+
+let k_cmp = compare_ints
 
 open Tjr_map
 let make_map_ops () = Tjr_map.make_map_ops k_cmp
@@ -41,7 +43,7 @@ module Test_state = struct
       (fun () -> 
          Im_cache_state.compare s1.cache s2.cache) |> then_
       (fun () -> 
-         Map_int.compare Pervasives.compare s1.base_map s2.base_map)
+         Map_int.compare compare_ints s1.base_map s2.base_map)
 
 end
 

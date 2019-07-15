@@ -1,11 +1,43 @@
+open Minicli
+
+let count,cap,evict_count = 
+  let module A = struct
+    let argc, args = CLI.init ()                        
+                       
+    let _ = 
+      if argc = 1 then (
+        Printf.printf {|usage: %s -count <ops> -cap <capacity> [-evict <count>]|} Sys.argv.(0);
+        exit 1
+      )
+
+    let int_of_string s = 
+      float_of_string_opt s |> function
+      | None -> int_of_string s
+      | Some f -> int_of_float f
+
+    (** Command line expects 1 argument, the capacity of the LRU *)
+    let cap = CLI.get_string ["-cap"] args |> int_of_string 
+    let evict_count = 
+      CLI.get_string_opt ["-evict"] args
+      |> function None -> 1
+                | Some s -> int_of_string s
+
+    let count = CLI.get_string ["-count"] args |> int_of_string
+
+    let _ = Printf.printf "%s, count is %d\n" __MODULE__ count
+    let _ = Printf.printf "%s, capacity is %d\n" __MODULE__ cap
+    let _ = Printf.printf "%s, evict count is %d\n" __MODULE__ evict_count
+    let _ = CLI.finalize ()
+  end
+  in
+  A.(count,cap,evict_count)
+
+
 module W = struct type t = int let weight: t->int = fun _ -> 1 end
-
-let cap = 100000
-
-let _ = Printf.printf "%s, capacity is %d\n" __MODULE__ cap
 
 let measure_execution_time_and_print s f = 
   Tjr_profile.measure_execution_time_and_print (CCString.pad 40 s) f
+
 
 (** {2 Functional} *)
 
@@ -20,8 +52,8 @@ let _ =
     let lru = ref (Lru_impl.empty cap)
 
     let _ = 
-      measure_execution_time_and_print "pqwy functional lru, 1e6 inserts" @@ fun () -> 
-      for i = 1 to (int_of_float 1e6) do
+      measure_execution_time_and_print "pqwy functional lru" @@ fun () -> 
+      for i = 1 to count do
         lru := (Lru_impl.add i (2*i) (!lru) |> Lru_impl.trim)
       done
   end
@@ -47,8 +79,8 @@ let _ =
     let lru = M.create cap
 
     let _ = 
-      measure_execution_time_and_print "pqwy imperative lru, 1e6 inserts" @@ fun () -> 
-      for i = 1 to (int_of_float 1e6) do
+      measure_execution_time_and_print "pqwy imperative lru" @@ fun () -> 
+      for i = 1 to count do
         M.add i (2*i) lru;
         M.trim lru
       done
@@ -71,8 +103,8 @@ let _ =
     module H = Hashtbl
 
     let _ = 
-      measure_execution_time_and_print "hashtable, with drop, 1e6 inserts" @@ fun () -> 
-      for i = 1 to (int_of_float 1e6) do
+      measure_execution_time_and_print "hashtable, with drop" @@ fun () -> 
+      for i = 1 to count do
         H.add ht i (2*i);
         ht_count:=!ht_count +1;
         (if !ht_count > cap then
@@ -90,8 +122,8 @@ let _ =
     module H = Hashtbl
 
     let _ = 
-      measure_execution_time_and_print "hashtable, with new, 1e6 inserts" @@ fun () -> 
-      for i = 1 to (int_of_float 1e6) do
+      measure_execution_time_and_print "hashtable, with new" @@ fun () -> 
+      for i = 1 to count do
         H.add !ht i (2*i);
         ht_count:=!ht_count +1;
         (if !ht_count > cap then
@@ -116,15 +148,15 @@ let _ =
     let cache_map_ops=Tjr_map.make_map_ops Pervasives.compare
 
     (* FIXME cap and evict count effect on performance??? *)
-    let cache_state = ref { max_size=cap; evict_count=cap/2; current_time=0; cache_map_ops; 
+    let cache_state = ref { max_size=cap; evict_count; current_time=0; cache_map_ops; 
                             cache_map=cache_map_ops.empty;
                             queue=Queue.empty }
 
     let l = lru_ops
 
     let _ = 
-      measure_execution_time_and_print "tjr_lru, 1e6 inserts" @@ fun () -> 
-      for i = 1 to (int_of_float 1e6) do
+      measure_execution_time_and_print "tjr_lru" @@ fun () -> 
+      for i = 1 to count do
         l.insert i (2*i) !cache_state |> fun (_,`Cache_state c) -> 
         cache_state:=c
       done

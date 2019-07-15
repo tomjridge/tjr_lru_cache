@@ -27,12 +27,6 @@ open Profiler
 
 module Internal = struct
 
-  (** FIXME tests are enabled; disable for production *)
-  let test f = f ()
-
-  (* module Poly_map = Tjr_map.With_pervasives_compare (\* FIXME placeholder *\) *)
-
-
   (* find_in_cache, get_evictees  --------------------------------- *)
 
 
@@ -68,8 +62,6 @@ module Internal = struct
   exception E_
 
 
-
-
   (** Construct the cached map on top of an existing map.
 
       NOTE the idea for [find] is that we execute a quick step to handle the
@@ -79,21 +71,16 @@ module Internal = struct
       the cache. To avoid the risk of stale results being returned from
       lower, we have to tag lower results with some kind of
       monotonically-increasing index.
-
-
   *)
   let make_cached_map () =
 
     (* Returns None if no evictees need to be flushed, or Some(evictees)
         otherwise *)
-    (* let mark = get_mark ~name:"lru_in_mem.get_evictees" in *)
-
     let get_evictees (c:('k,'v,'k_map)cache_state) = 
-      assert(mark "ab"; true);
-      assert(mark "bb"; true);
+      mark "ab";
       let m = c.cache_map_ops in
       let card = m.cardinal c.cache_map in
-      assert(mark "bc"; true);
+      mark "bc";
       match card > c.max_size with (* FIXME inefficient *)
       | false -> (None,c)
       | true -> 
@@ -119,7 +106,7 @@ module Internal = struct
         end;
         (* now we have evictees, new queue, and new map *)
         let c = {c with cache_map=(!cache_map); queue=(!queue)} in
-        assert(mark "cd"; true);
+        mark "cd";
         (Some (!evictees),c)
     in
 
@@ -157,11 +144,9 @@ module Internal = struct
     (* FIXME TODO we need to also handle the cases where we flush to
        lower immediately *)
 
-    (* let mark = get_mark ~name:"lru_in_mem.perform" in *)
-
     (* NOTE entry_type is not Lower *)
     let perform k entry_type c = 
-      assert(mark "_"; true);
+      mark "_";
       assert(not (Entry.is_Lower entry_type));
       let m = c.cache_map_ops in
       let c = tick c in
@@ -170,24 +155,24 @@ module Internal = struct
           Some (m.find k c.cache_map)
         with Not_found -> None 
       in
-      assert(mark "bc"; true);
+      mark "bc";
       let e' = {entry_type; atime=c.current_time } in
       (* new entry in cache_map *)
       let c = {c with cache_map=(m.add k e' c.cache_map) } in
       (* maybe remove existing entry from queue *)
-      assert(mark "cd"; true);
+      mark "cd";
       let c = 
         match e with
         | None -> c
         | Some e -> 
           {c with queue=(Queue.remove e.atime c.queue) } 
       in
-      assert(mark "de"; true);
+      mark "de"; 
       (* add new entry *)
       let c = {c with queue=(Queue.add e'.atime k c.queue) } in
-      assert(mark "ef"; true);
+      mark "ef";
       get_evictees c |> fun (es,c) -> 
-      assert(mark "fg"; true);
+      mark "fg";
       (`Evictees es, `Cache_state c)
     in
 
