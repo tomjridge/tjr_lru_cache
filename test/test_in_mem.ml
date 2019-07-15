@@ -169,7 +169,7 @@ let step t op =
    we already check internal invariants of course
 *)
 
-let check_state x = assert(Im_cache_state.wf x.cache) (* FIXME TODO *)
+let check_state x = assert_(Im_cache_state.wf x.cache) (* FIXME TODO *)
 let check_step x op y = () (* FIXME TODO *)
 
 let cmp = Test_state.compare

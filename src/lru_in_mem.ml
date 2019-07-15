@@ -25,33 +25,28 @@ open Im_intf
 module Profiler = Make_profiler()
 open Profiler
 
-module Internal = struct
+module Internal(S:sig
+    type k
+    type v
+    val compare: k -> k -> int
+  end) = struct
 
-  (* find_in_cache, get_evictees  --------------------------------- *)
-
+  open S
 
   (* NOTE evictees are removed from the map, so no need to mark clean *)
 
-  let tick c = { c with current_time=c.current_time+1}
+  module W = struct type t = v entry let weight: t->int = fun _ -> 1 end
 
+  module L = Lru.F.Make
+      (struct type t = k let compare = compare end)
+      (W)
+
+  
   (** Attempt to locate key in cache. *)
-  let find_in_cache ~update_time (k:'k) (c:('k,'v,'k_map)cache_state) = 
-    let m = c.cache_map_ops in
-    let c = tick c in
-    try 
-      let e = c.cache_map_ops.find k c.cache_map in          
-      (* update time *)
-      let c = 
-        if update_time then
-          {c with 
-           cache_map=m.add k {e with atime=c.current_time} c.cache_map;
-           queue=c.queue |> Queue.remove e.atime |> Queue.add c.current_time k}
-        else 
-          c
-      in
-      (Some e,c)
-    with Not_found -> 
-      (None,c)
+  let find_in_cache (k:'k) (c:('k,'v,'lru)cache_state) = 
+    L.find k c.lru_state |> function
+    | None -> None,c
+    | Some e -> (Some e,c)
 
 
   let _ = find_in_cache
@@ -62,7 +57,7 @@ module Internal = struct
   exception E_
 
 
-  (** Construct the cached map on top of an existing map.
+  (** Construct the cached map, using existing map find operation.
 
       NOTE the idea for [find] is that we execute a quick step to handle the
       case that there is an entry in the cache. If there isn't, we make a
@@ -76,10 +71,9 @@ module Internal = struct
 
     (* Returns None if no evictees need to be flushed, or Some(evictees)
         otherwise *)
-    let get_evictees (c:('k,'v,'k_map)cache_state) = 
+    let get_evictees (c:('k,'v,'lru)cache_state) = 
       mark "ab";
-      let m = c.cache_map_ops in
-      let card = m.cardinal c.cache_map in
+      let card = L.size c.lru_state in
       mark "bc";
       match card > c.max_size with (* FIXME inefficient *)
       | false -> (None,c)
@@ -87,27 +81,20 @@ module Internal = struct
         (* how many to evict? *)
         let n = c.evict_count in
         (* for non-dirty, we just remove from map; for dirty we
-           must flush to lower *)
-        let count = ref 0 in
-        let evictees = ref [] in
-        let queue = ref c.queue in  
-        let cache_map = ref c.cache_map in
-        begin 
-          try 
-            Queue.iter 
-              (fun time k -> 
-                 queue:=Queue.remove time !queue;
-                 evictees:=(k,m.find k c.cache_map)::!evictees;
-                 cache_map:=m.remove k !cache_map;
-                 count:=!count +1;
-                 if !count >= n then raise E_ else ())
-              c.queue
-          with E_ -> ()
-        end;
+           must flush to lower *)        
+        let evictees,lru_state = 
+          ([],c.lru_state,n) |> List_.iter_break (fun (es,s,n) -> 
+              match n <= 0 with
+              | true -> `Break (es,s)
+              | false -> 
+                L.pop_lru s |> function
+                | None -> `Break (es,s)
+                | Some ((k,e),s) -> `Continue(e::es,s,(n-1)))
+        in
         (* now we have evictees, new queue, and new map *)
-        let c = {c with cache_map=(!cache_map); queue=(!queue)} in
+        let c = {c with lru_state} in
         mark "cd";
-        (Some (!evictees),c)
+        (Some evictees,c)
     in
 
 
@@ -115,11 +102,10 @@ module Internal = struct
          get rid of evictees; so a read causes a write; but this should be
          relatively infrequent *)
     let find (k:'k) c = 
-      let m = c.cache_map_ops in
-      find_in_cache ~update_time:true k c |> fun (v,c) -> 
+      find_in_cache k c |> fun (v,c) -> 
       match v with
       | None -> 
-        `Not_in_cache (fun ~vopt_from_lower ~cache_state ->          
+        Not_in_cache (fun ~vopt_from_lower ~cache_state ->          
             let c = cache_state in
             let c = tick c in
             (* need to update map before returning *)
@@ -206,22 +192,22 @@ module Internal = struct
   let _ : 
     unit ->
     (find:('k ->
-           ('k, 'a, 'k_map) cache_state ->
+           ('k, 'a, 'lru) cache_state ->
            [> `In_cache of 'a entry
            | `Not_in_cache of
                 vopt_from_lower:'a option ->
-                cache_state:('k, 'v, 'k_map) cache_state ->
+                cache_state:('k, 'v, 'lru) cache_state ->
                 'a option * [> `Evictees of ('k * 'v entry) list option ] *
-                [> `Cache_state of ('k, 'v, 'k_map) cache_state ] ]) ->
+                [> `Cache_state of ('k, 'v, 'lru) cache_state ] ]) ->
      insert:('k ->
              'v ->
-             ('k, 'v, 'k_map) cache_state ->
+             ('k, 'v, 'lru) cache_state ->
              [> `Evictees of ('k * 'v entry) list option ] *
-             [> `Cache_state of ('k, 'v, 'k_map) cache_state ]) ->
+             [> `Cache_state of ('k, 'v, 'lru) cache_state ]) ->
      delete:('k ->
-             ('k, 'v, 'k_map) cache_state ->
+             ('k, 'v, 'lru) cache_state ->
              [> `Evictees of ('k * 'v entry) list option ] *
-             [> `Cache_state of ('k, 'v, 'k_map) cache_state ]) ->
+             [> `Cache_state of ('k, 'v, 'lru) cache_state ]) ->
      sync_key:('b ->
                ('b, 'c, 'd) cache_state ->
                [> `Not_present | `Present of 'c entry * ('b, 'c, 'd) cache_state ]) ->
@@ -240,4 +226,4 @@ module Internal = struct
     Lru_in_mem_ops.{ find; insert; delete; sync_key }
 end
 
-let make_lru_in_mem () : ('k,'v,'k_map,'t)Lru_in_mem_ops.lru_in_mem_ops = Internal.make_lru_in_mem ()
+let make_lru_in_mem () : ('k,'v,'lru,'t)Lru_in_mem_ops.lru_in_mem_ops = Internal.make_lru_in_mem ()
