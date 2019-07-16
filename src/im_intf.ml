@@ -56,10 +56,10 @@ include Entry.Export
 
 
 
-module Cache_state = struct
+module Lim_state = struct
 
 
-(** The [cache_state] consists of:
+(** The LRU in-memory cache state consists of:
 
 - [max_size]: the max number of entries in the cache
 
@@ -70,19 +70,30 @@ module Cache_state = struct
 - [lru_state]: the lru state
 
 *)
-  type ('k,'v,'lru) cache_state = {  
+  type ('k,'v,'lru) lim_state = {  
     max_size: int;
     evict_count: int; (* number to evict when cache full *)
     lru_state:'lru;
+    compare_lru:'lru -> 'lru -> int
   }
 end
-include Cache_state
+include Lim_state
 
 
 
 
 
 (** A record to package up the functions from {! Lru_in_mem}. *)
+
+type ('a,'b) maybe_in_cache = In_cache of 'a | Not_in_cache of 'b
+
+type ('k,'v,'lru) evictees_x_lim_state = {
+  evictees: ('k * 'v entry) list option;
+  lim_state: ('k,'v,'lru) lim_state
+}
+
+module Lru_in_mem_ops = struct
+
 
 (** This type is what is returned by the [make_lru_in_mem]
     function. 
@@ -91,31 +102,22 @@ include Cache_state
     the dirty flag). If you want to flush to disk, you have to do
     something else (see {!Lru_multithreaded}).
 *)
-module Lru_in_mem_ops = struct
-
-  type ('a,'b) maybe_in_cache = In_cache of 'a | Not_in_cache of 'b
-
-  type ('k,'v,'lru) evictees_x_cache_state = {
-    evictees: ('k * 'v entry) list option;
-    cache_state: ('k,'v,'lru) cache_state
-  }
-
-  type ('k,'v,'lru,'t) lru_in_mem_ops = {
-    find: 'k -> ('k,'v,'lru) cache_state -> 
+  type ('k,'v,'lru) lru_in_mem_ops = {
+    find: 'k -> ('k,'v,'lru) lim_state -> 
       ('v entry, 
        vopt_from_lower:'v option ->
-       cache_state:('k, 'v,'lru) cache_state ->
+       lim_state:('k, 'v,'lru) lim_state ->
        'v option * 
-         ('k,'v,'lru) evictees_x_cache_state ) maybe_in_cache;
+         ('k,'v,'lru) evictees_x_lim_state ) maybe_in_cache;
 
-    insert: 'k -> 'v -> ('k,'v,'lru) cache_state ->
-      ('k,'v,'lru) evictees_x_cache_state;
+    insert: 'k -> 'v -> ('k,'v,'lru) lim_state ->
+      ('k,'v,'lru) evictees_x_lim_state;
 
-    delete: 'k -> ('k, 'v,'lru) cache_state ->
-      ('k,'v,'lru) evictees_x_cache_state;
+    delete: 'k -> ('k, 'v,'lru) lim_state ->
+      ('k,'v,'lru) evictees_x_lim_state;
 
-    sync_key: 'k -> ('k, 'v,'lru) cache_state -> 
-      ('v entry * ('k, 'v,'lru) cache_state, unit) maybe_in_cache
+    sync_key: 'k -> ('k, 'v,'lru) lim_state -> 
+      ('v entry * ('k, 'v,'lru) lim_state, unit) maybe_in_cache
 
   }
 end

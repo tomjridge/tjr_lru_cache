@@ -1,8 +1,23 @@
 (** A multithreaded / concurrent-safe implementation of the LRU
    interface. This extends the in-memory explicit-state-passing code
-   to the monad. *)
+   to the monad. 
 
-(* FIME/TODO
+Compared to the in-mem version:
+
+- we use the monad
+- we allow multiple threads to call the interface methods
+- for long-running operations (eg find, when the key is not in the i-m
+  cache), we maintain a queue of blocked threads, make a single call
+  to the lower layers, and when this returns we release the threads
+- we have explicit messages to the lower layer
+- the api includes "persist mode" (now or later) to indicate whether
+  insert/delete operations should persist immediately or not
+
+Given that the likely target is Lwt, this is probably overkill.
+
+*)
+
+(* FIXME/TODO
 
 FIXME It may be that we want to prioritize non-evictee updates in the
 pcache over evictee writes. But this introduces much complication into
@@ -18,7 +33,7 @@ the pcache.
       to disk in 1 block write
 
 
-- for in-mem, when we return with cache_state and evictees, we aim to
+- for in-mem, when we return with lim_state and evictees, we aim to
    unblock the cache state ASAP; but can we do this without ensuring
   that the evictees are on-disk? Yes (the evictees can be written to
   disk in a delayed fashion), but we must be careful that the evictees
@@ -35,23 +50,16 @@ the pcache.
 *)
 
 open Im_intf
-open Lru_in_mem
+(* open Lru_in_mem *)
 open Mt_intf
-
-
-(* profiling -------------------------------------------------------- *)
+open Threading_types
+open Mt_state_type
 
 module Mt_profiler = Make_profiler()
 open Mt_profiler
 
 
-(* let _ = Printf.printf "Warning, profiling enabled. Your code may run slow. At: \n%s\n%!" __LOC__ *)
-(* let _ = assert(Printf.printf "Assertions enabled. Good!\n%!"; true) *)
-
-
 module Internal2 = struct
-  (* lru state -------------------------------------------------------- *)
-
 
   (** NOTE the following, which essentially adds waiting threads to a
       wait queue, and notifies them when an event occurs, is a
@@ -91,6 +99,9 @@ module Internal2 = struct
     return {lru with blocked_threads}
 
 
+
+  (** {2 Callback interface} *)
+
   (** NOTE [with_lru f] executes whilst locking lru state; it should be
       possible to execute the monadic [f] quickly, without yielding to
       other threads. 
@@ -120,8 +131,14 @@ module Internal2 = struct
       any) and mark it clean and flush to lower.
 
   *)
-
-  let make_lru_ops' ~monad_ops ~(async:'t async) ~with_lru_ops ~to_lower  =
+  let make_lru_callback_ops
+        ~(lim_ops:('k,'v,'lru)Lru_in_mem_ops.lru_in_mem_ops) 
+        ~monad_ops 
+        ~(async:'t async) 
+        ~with_lru 
+        ~to_lower  
+    =
+    let open Msg_type in
     let ( >>= ) = monad_ops.bind in 
     let return = monad_ops.return in
     let maybe_to_lower = function
@@ -134,142 +151,130 @@ module Internal2 = struct
       | Some es -> Some (Evictees es)
     in
     let maybe_evictees_to_lower es = maybe_to_lower (evictees_to_msg_option es) in
-    let with_lru = with_lru_ops.with_lru in
+    let with_lru = with_lru.with_lru in
     let run_callbacks_for_key = run_callbacks_for_key ~monad_ops ~async in
-    let in_mem_ops = make_lru_in_mem() in
     let find k (callback:'v option -> (unit,'t) m) = 
       with_lru (fun ~lru ~set_lru -> 
-          (* check if k is already in the cache *)
-          in_mem_ops.find k lru.cache_state |> function
-          | `In_cache e -> (
-              let vopt = 
-                match e.entry_type with
-                | Insert i -> (Some i.value)
-                | Delete _ -> None
-                | Lower vopt -> vopt
+        (* check if k is already in the cache *)
+        lim_ops.find k lru.lim_state |> function
+        | In_cache e -> (
+            let vopt = 
+              match e with
+              | Insert i -> (Some i.value)
+              | Delete _ -> None
+              | Lower vopt -> vopt
+            in
+            async (fun () -> callback vopt))
+        (* FIXME note the callback should not do computation on
+           receiving an argument... it must wait for the world state
+        *)
+        | Not_in_cache kk -> (
+            (* now we have to call to the lower level; first we check
+               that a call isn't already in process... *)
+            add_callback_on_key ~k ~callback ~lru |> fun (lru,lower_call_status) -> 
+            match lower_call_status with
+            | `Lower_call_in_progress -> set_lru lru  (* and return *)
+            | `Need_to_call_lower -> 
+              (* we want to issue a `Find k call to lower, with a
+                 callback that unblocks the waiting threads *)
+              let callback vopt_from_lower : (unit,'t)m =                    
+                with_lru (fun ~lru ~set_lru -> 
+                  (* first wake up sleeping threads *)
+                  run_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
+                  kk ~vopt_from_lower ~lim_state:lru.lim_state 
+                  |> fun (vopt,exc) -> 
+                  (* have to handle evictees by flushing to lower *)
+                  maybe_evictees_to_lower exc.evictees >>= fun () ->
+                  set_lru {lru with lim_state=exc.lim_state })
               in
-              async (fun () -> callback vopt))
-          (* FIXME note the callback should not do computation on
-             receiving an argument... it must wait for the world state
-          *)
-          | `Not_in_cache kk -> (
-              (* now we have to call to the lower level; first we check
-                 that a call isn't already in process... *)
-              add_callback_on_key ~k ~callback ~lru |> fun (lru,lower_call_status) -> 
-              match lower_call_status with
-              | `Lower_call_in_progress -> set_lru lru  (* and return *)
-              | `Need_to_call_lower -> 
-                (* we want to issue a `Find k call to lower, with a
-                   callback that unblocks the waiting threads *)
-                let callback vopt_from_lower : (unit,'t)m =                    
-                  with_lru (fun ~lru ~set_lru -> 
-                      (* first wake up sleeping threads *)
-                      run_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
-                      kk ~vopt_from_lower ~cache_state:lru.cache_state 
-                      |> fun (vopt,`Evictees es, `Cache_state cache_state) -> 
-                      (* have to handle evictees by flushing to lower *)
-                      maybe_evictees_to_lower es >>= fun () ->
-                      set_lru {lru with cache_state })
-                in
-                to_lower (Find(k,callback))))
+              to_lower (Find(k,callback))))
     in
 
-    (* let mark = get_mark ~name:"mt_insert"  in  *)
 
     let insert mode k v (callback: unit -> (unit,'t)m) =
       with_lru (fun ~lru ~set_lru -> 
-          assert(mark "ab";true);
-          in_mem_ops.insert k v lru.cache_state 
-          |> function (`Evictees es, `Cache_state cache_state) ->
-            assert(mark "bc";true);        
-            (match es with
-             | None -> return ()
-             | Some es -> to_lower (Evictees es)) >>= fun () ->
-            (* handle mode=persist_now, cache_state *)
-            assert(mark "cd";true);        
-            let cache_state,to_lower = 
-              match mode with
-              | Persist_now -> (
-                  in_mem_ops.sync_key k cache_state |> function
-                  | `Not_present -> failwith "impossible"
-                  | `Present (e,c) -> (
-                      assert(Entry.entry_type_is_dirty e.entry_type);
-                      (c,Some(Insert(k,v,callback)))))
-              (* FIXME order or evictees vs insert? *)
-              | Persist_later -> (cache_state,None)
-            in
-            maybe_to_lower to_lower >>= fun () ->
-            assert(mark "de";true);        
-            set_lru {lru with cache_state}) >>= fun () ->
-      assert(mark "ef";true);        
+        mark "ab";
+        lim_ops.insert k v lru.lim_state |> fun exc ->
+        mark "bc";
+        (match exc.evictees with
+         | None -> return ()
+         | Some es -> to_lower (Evictees es)) >>= fun () ->
+        (* handle mode=persist_now, lim_state *)
+        mark "cd";
+        let lim_state,to_lower = 
+          match mode with
+          | Persist_now -> (
+              lim_ops.sync_key k exc.lim_state |> function
+              | Not_in_cache () -> failwith "impossible"
+              | In_cache (e,c) -> (
+                  assert(Entry.entry_is_dirty e);
+                  (c,Some(Insert(k,v,callback)))))
+          (* FIXME order or evictees vs insert? *)
+          | Persist_later -> (exc.lim_state,None)
+        in
+        maybe_to_lower to_lower >>= fun () ->
+        mark "de";
+        set_lru {lru with lim_state}) 
+      >>= fun () ->
+      mark "ef";
+      (* FIXME check the following *)
       (if mode=Persist_later then async(callback) else return ())
     in
 
     let delete mode k callback = 
       with_lru (fun ~lru ~set_lru -> 
-          in_mem_ops.delete k lru.cache_state 
-          |> function (`Evictees es, `Cache_state cache_state) ->
-            (* update lru with evictees *)
-            maybe_evictees_to_lower es >>= fun () ->
-            (* handle mode=persist_now, cache_state *)
-            let cache_state,to_lower = 
-              match mode with
-              | Persist_now -> (
-                  in_mem_ops.sync_key k cache_state |> function
-                  | `Not_present -> failwith "impossible"
-                  | `Present (e,c) -> (
-                      assert(Entry.entry_type_is_dirty e.entry_type);
-                      (c,Some(Delete(k,callback))))
-                  (* FIXME order or evictees vs insert? *))
-              | Persist_later -> (cache_state,None)
-            in
-            maybe_to_lower to_lower >>= fun () ->
-            set_lru {lru with cache_state}) >>= fun () ->
+        lim_ops.delete k lru.lim_state 
+        |> function exc ->
+          (* update lru with evictees *)
+          maybe_evictees_to_lower exc.evictees >>= fun () ->
+          (* handle mode=persist_now, lim_state *)
+          let lim_state,to_lower = 
+            match mode with
+            | Persist_now -> (
+                lim_ops.sync_key k exc.lim_state |> function
+                | Not_in_cache () -> failwith "impossible"
+                | In_cache (e,c) -> (
+                    assert(Entry.entry_is_dirty e);
+                    (c,Some(Delete(k,callback))))
+                (* FIXME order or evictees vs insert? *))
+            | Persist_later -> (exc.lim_state,None)
+          in
+          maybe_to_lower to_lower >>= fun () ->
+          set_lru {lru with lim_state})
+      >>= fun () ->
       (if mode=Persist_later then async(callback) else return ())
     in
 
     let sync_key k callback = 
       with_lru (fun ~lru ~set_lru -> 
-          in_mem_ops.sync_key k lru.cache_state |> function
-          | `Not_present -> async (callback)
-          | `Present (e,cache_state) ->             
-            match Entry.entry_type_is_dirty e.entry_type with
-            | false -> 
-              (* just return *)
-              async (callback)
-            | true -> 
-              let to_lower =
-                match e.entry_type with
-                | Insert{value;dirty} -> Some(Insert(k,value,callback))
-                | Delete{dirty} -> Some(Delete(k,callback))
-                | _ -> None
-              in
-              maybe_to_lower to_lower >>= fun () ->
-              set_lru {lru with cache_state})
+        lim_ops.sync_key k lru.lim_state |> function
+        | Not_in_cache () -> async (callback)
+        | In_cache (e,lim_state) ->             
+          match Entry.entry_is_dirty e with
+          | false -> 
+            (* just return *)
+            async (callback)
+          | true -> 
+            let to_lower =
+              match e with
+              | Insert{value;dirty} -> Some(Insert(k,value,callback))
+              | Delete{dirty} -> Some(Delete(k,callback))
+              | _ -> None
+            in
+            maybe_to_lower to_lower >>= fun () ->
+            set_lru {lru with lim_state})
     in
-    fun kk -> kk ~find ~insert ~delete ~sync_key
+    Mt_callback_ops.{find;insert;delete;sync_key}
+    
 
 
+  (** {2 Event-based interface}
 
-  (* export ----------------------------------------------------------- *)
-
-  (* open Lru_interface *)
-
-  (** Construct the LRU callback-oriented interface *)
-  let make_lru_callback_ops ~monad_ops ~async ~with_lru_ops ~to_lower =
-    make_lru_ops' ~monad_ops ~async ~with_lru_ops ~to_lower @@ fun ~find ~insert ~delete ~sync_key -> 
-    let open Mt_callback_ops in
-    {find;insert;delete;sync_key}
-
-
-
-  (* implement non-callback interface --------------------------------- *)
-
-  (** We now implement the standard (non-callback) interface, using events *)
+      We now implement the standard (non-callback) interface, using events.
+  *)
 
   (** We assume that there is a way to "fulfill" an 'a m with an 'a  *)
   type 't event_ops = 't Tjr_monad.Event.event_ops 
-
 
   let make_lru_ops ~monad_ops ~event_ops ~(callback_ops:('k,'v,'t)Mt_callback_ops.mt_callback_ops) =
     let open Tjr_monad.Event in
@@ -277,33 +282,41 @@ module Internal2 = struct
     let return = monad_ops.return in
     let Mt_callback_ops.{find;insert;delete;sync_key} = callback_ops in
     let {ev_create=create;ev_signal=signal;ev_wait=wait} = event_ops in
-    let find k = 
+    let mt_find k = 
       create() >>= fun e ->
       (find k (fun v -> signal e v)) >>= fun () -> wait e
     in
-    let insert mode k v =
+    let mt_insert mode k v =
       create() >>= fun e ->
       (insert mode k v (fun () -> signal e ())) >>= fun () -> wait e
     in
-    let delete mode k = 
+    let mt_delete mode k = 
       create() >>= fun e ->
       (delete mode k (fun () -> signal e ())) >>= fun () -> wait e
     in
-    let sync_key k =
+    let mt_sync_key k =
       create() >>= fun e -> 
       (sync_key k (fun () -> signal e ())) >>= fun () -> wait e
     in
-    let sync_all_keys () =
+    let mt_sync_all_keys () =
       failwith "FIXME TODO not implemented yet"
     in
     let open Mt_ops in
-    {find;insert;delete;sync_key;sync_all_keys}
+    {mt_find;mt_insert;mt_delete;mt_sync_key;mt_sync_all_keys}
 
 end
 
-let make_lru_callback_ops = Internal2.make_lru_callback_ops
+let make_lru_callback_ops :
+lim_ops:('k, 'v, 'lru) Lru_in_mem_ops.lru_in_mem_ops ->
+monad_ops:'t monad_ops ->
+async:((unit -> (unit, 't) m) -> (unit, 't) m) ->
+with_lru:('a, 'k, 'v, 'lru, 'b, 't) with_lru_ops ->
+to_lower:(('k, 'v, 't) Msg_type.msg -> (unit, 't) m) ->
+('k, 'v, 't) Mt_callback_ops.mt_callback_ops
+= Internal2.make_lru_callback_ops
 
-let make_lru_ops : monad_ops:'t monad_ops ->
+let make_lru_ops : 
+monad_ops:'t monad_ops ->
 event_ops:'t Event.event_ops ->
 callback_ops:('k, 'v, 't) Mt_callback_ops.mt_callback_ops ->
 ('k, 'v, 't) Mt_ops.mt_ops

@@ -1,4 +1,9 @@
-(** Main mt (multithreaded lru) types *)
+(** Main mt (multithreaded lru) types. *)
+
+
+(** NOTE the main interfaces are in module {!Mt_callback_ops} and {!Mt_ops}.
+
+ *)
 open Im_intf
 
 module Persist_mode = struct
@@ -10,7 +15,7 @@ module Persist_mode = struct
       caller. Thus, we implement only blocking versions of calls. *)
   type persist_mode = Persist_later | Persist_now
 
-  type mode = persist_mode
+  (* type mode = persist_mode *)
 end
 include Persist_mode
 
@@ -24,8 +29,8 @@ module Mt_callback_ops = struct
   (** The interface *provided* by the LRU, with callbacks *)
   type ('k,'v,'t) mt_callback_ops = {
     find: 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
-    insert: mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
-    delete: mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+    insert: persist_mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
+    delete: persist_mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
     sync_key: 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
   }
 end
@@ -33,6 +38,7 @@ end
 
 
 
+(** The main LRU operations, with a non-callback interface. *)
 module Mt_ops = struct
   (** The interface provided by the multithreaded LRU; provides
       blocking/non-blocking operations, and persist now/persist later
@@ -50,14 +56,14 @@ module Mt_ops = struct
       light-weight thread. *)
 
   type ('k,'v,'t) mt_ops = {
-    find: 'k -> ('v option,'t) m; 
-    insert: mode -> 'k -> 'v -> (unit,'t) m;
-    delete: mode -> 'k -> (unit,'t) m;
-    sync_key: 'k -> (unit,'t) m;
-    sync_all_keys: unit -> (unit,'t) m;
+    mt_find: 'k -> ('v option,'t) m; 
+    mt_insert: persist_mode -> 'k -> 'v -> (unit,'t) m;
+    mt_delete: persist_mode -> 'k -> (unit,'t) m;
+    mt_sync_key: 'k -> (unit,'t) m;
+    mt_sync_all_keys: unit -> (unit,'t) m;
   }
 end
-(* NOTE don't include *)
+include Mt_ops
 
 
 
@@ -87,7 +93,7 @@ module Threading_types = struct
 
   (* open Msg_type *)
 end
-include Threading_types
+open Threading_types
 
 
 
@@ -107,7 +113,7 @@ NOTE Access to the [lru_state] is serialized via [with_lru].
 *)
 
 
-(** The [lru_state] consists of:
+(** The state consists of:
 
 - the cache state
 
@@ -115,42 +121,40 @@ NOTE Access to the [lru_state] is serialized via [with_lru].
    operation to complete at the disk layer)
 
 *)
-  type ('k,'v,'k_map,'t_map,'t) lru_state = { 
-    cache_state: ('k,'v,'k_map) cache_state; 
+  type ('k,'v,'lru,'t_map,'t) mt_state = { 
+    lim_state: ('k,'v,'lru) lim_state; 
     blocked_threads: 't_map;
     blocked_threads_ops:('k,('v,'t)blocked_thread list,'t_map)Tjr_map.map_ops
   }
   
-  let mt_initial_state ~max_size ~evict_count ~compare_k = 
-    let cache_state = Im_cache_state.mk_initial_cache ~max_size ~evict_count ~compare_k in
+  let mt_initial_state ~(initial_lim_state:('k,'v,'lru)lim_state) ~compare_k = 
+    let lim_state = initial_lim_state in
     let blocked_threads_ops : ('k,('v,'t)blocked_thread list,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = 
       Tjr_map.make_map_ops compare_k in
     {
-      cache_state; 
+      lim_state; 
       blocked_threads=blocked_threads_ops.empty;
       blocked_threads_ops;
     }
 
   let _ :
-max_size:int ->
-evict_count:int ->
+initial_lim_state:('k, 'v, 'lru) lim_state ->
 compare_k:('k -> 'k -> int) ->
-('k, 'v, ('k, 'v entry, unit) Tjr_map.map,
- ('k, ('v, 't) blocked_thread list, unit) Tjr_map.map, 't)
-lru_state
+('k, 'v, 'lru, ('k, ('v, 't) blocked_thread list, unit) Tjr_map.map, 't)
+mt_state
 = mt_initial_state
 
-  type ('msg,'k,'v,'k_map,'t_map,'t) with_lru_ops = {
+  type ('msg,'k,'v,'lru,'t_map,'t) with_lru_ops = {
     with_lru: 
       'a. 
-        (lru:('k,'v,'k_map,'t_map,'t)lru_state -> 
-         set_lru:(('k,'v,'k_map,'t_map,'t)lru_state -> (unit,'t)m)
+        (lru:('k,'v,'lru,'t_map,'t)mt_state -> 
+         set_lru:(('k,'v,'lru,'t_map,'t)mt_state -> (unit,'t)m)
          -> ('a,'t)m)
       -> ('a,'t)m
   }
 
 end
-include Mt_state_type
+(* open Mt_state_type *)
 
 
 
@@ -163,4 +167,4 @@ module Msg_type = struct
     | Find of 'k * ('v option -> (unit,'t)m)
     | Evictees of ('k * 'v entry) list
 end
-include Msg_type
+(* include Msg_type *)

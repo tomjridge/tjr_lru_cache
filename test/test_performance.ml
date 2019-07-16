@@ -144,21 +144,19 @@ let _ =
     open Tjr_lru_cache
     open Im_intf
 
-    let lru_ops = make_lru_in_mem ()
-    let cache_map_ops=Tjr_map.make_map_ops Pervasives.compare
+    let lru_ops = Lru_in_mem.Int_int.ops
+    (* let cache_map_ops=Tjr_map.make_map_ops Pervasives.compare *)
 
     (* FIXME cap and evict count effect on performance??? *)
-    let cache_state = ref { max_size=cap; evict_count; current_time=0; cache_map_ops; 
-                            cache_map=cache_map_ops.empty;
-                            queue=Queue.empty }
+    let cache_state = ref @@ Lru_in_mem.Int_int.initial_state ~max_size:cap ~evict_count
 
     let l = lru_ops
 
     let _ = 
       measure_execution_time_and_print "tjr_lru" @@ fun () -> 
       for i = 1 to count do
-        l.insert i (2*i) !cache_state |> fun (_,`Cache_state c) -> 
-        cache_state:=c
+        l.insert i (2*i) !cache_state |> fun exc -> 
+        cache_state:=exc.lim_state
       done
   end
   in
