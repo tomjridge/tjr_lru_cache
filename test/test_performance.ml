@@ -87,6 +87,31 @@ let _ =
   end
   in
   ()
+
+
+(** {2 Imperative with bulk eviction} *)
+
+
+module M_impl' = Lru.M.Make(Htype)(W)
+
+let _ = 
+  let module A = struct
+    module M = M_impl'
+
+    let lru = M.create cap
+
+    let _ = 
+      measure_execution_time_and_print "pqwy imperative lru with batch evict" @@ fun () -> 
+      for i = 1 to count do
+        M.add i (2*i) lru;
+        (match M.size lru > cap with
+           | true -> (for _i = 1 to evict_count do M.drop_lru lru done)
+           | false -> ())
+      done
+  end
+  in
+  ()
+
     
 
 
