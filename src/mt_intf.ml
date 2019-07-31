@@ -144,11 +144,11 @@ compare_k:('k -> 'k -> int) ->
 mt_state
 = mt_initial_state
 
-  type ('msg,'k,'v,'lru,'t_map,'t) with_lru_ops = {
+  type ('mt_state,'t) with_lru_ops = {
     with_lru: 
       'a. 
-        (lru:('k,'v,'lru,'t_map,'t)mt_state -> 
-         set_lru:(('k,'v,'lru,'t_map,'t)mt_state -> (unit,'t)m)
+        (lru:'mt_state -> 
+         set_lru:('mt_state -> (unit,'t)m)
          -> ('a,'t)m)
       -> ('a,'t)m
   }

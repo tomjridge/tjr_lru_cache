@@ -310,7 +310,7 @@ let make_lru_callback_ops :
 lim_ops:('k, 'v, 'lru) Lru_in_mem_ops.lru_in_mem_ops ->
 monad_ops:'t monad_ops ->
 async:((unit -> (unit, 't) m) -> (unit, 't) m) ->
-with_lru:('a, 'k, 'v, 'lru, 'b, 't) with_lru_ops ->
+with_lru:('mt_state, 't) with_lru_ops ->
 to_lower:(('k, 'v, 't) Msg_type.msg -> (unit, 't) m) ->
 ('k, 'v, 't) Mt_callback_ops.mt_callback_ops
 = Internal2.make_lru_callback_ops
