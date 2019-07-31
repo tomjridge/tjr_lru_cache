@@ -15,6 +15,7 @@ dev-repo     : "https://github.com/tomjridge/tjr_lru_cache.git"
 
 depends: [
   "tjr_fs_shared"
+  "lru"  # use pqwy lru code
   "minicli" "containers"  # for testing  
 ]
 
