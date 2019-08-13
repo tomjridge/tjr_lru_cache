@@ -89,15 +89,15 @@ let merge_evictees_with_base_map (es:(key*value entry)list option) (m:int Map_in
   | Some es -> 
     (* Printf.printf "Merging evictees..."; *)
     (es,m) |> 
-    List_.iter_break (function
-        | ([],m) -> `Break m
+    iter_break (function
+        | ([],m) -> Break m
         | (k,e)::es,m -> 
           match e with
-          | Insert { value; dirty=true } -> `Continue (es,Map_int.add k value m)
-          | Insert { value; dirty=false } -> `Continue (es,m) 
-          | Delete { dirty=true } -> `Continue(es,Map_int.remove k m)
-          | Delete { dirty=false } -> `Continue(es,m)
-          | Lower vopt -> `Continue(es,m))
+          | Insert { value; dirty=true } -> Cont (es,Map_int.add k value m)
+          | Insert { value; dirty=false } -> Cont (es,m) 
+          | Delete { dirty=true } -> Cont(es,Map_int.remove k m)
+          | Delete { dirty=false } -> Cont(es,m)
+          | Lower vopt -> Cont(es,m))
 
 
 

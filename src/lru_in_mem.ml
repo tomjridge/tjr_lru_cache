@@ -22,9 +22,6 @@ NOTE that the operations occur not in a monad - instead, explicit
 open Im_intf
 
 
-module Profiler = Make_profiler()
-open Profiler
-
 type ('k,'v,'lru) lru_fc = (module Lru.F.S with type k='k and type v='v entry and type t='lru)
 
 module Make_lru_fc(S:sig
@@ -96,9 +93,9 @@ module Internal(S:sig
     (* Returns None if no evictees need to be flushed, or Some(evictees)
         otherwise *)
     let get_evictees (c:(k,v,lru)lim_state) : (k, v, lru) evictees_x_lim_state = 
-      mark "ab";
+      (* mark "ab"; *)
       let card = L.size c.lru_state in
-      mark "bc";
+      (* mark "bc"; *)
       match card > c.max_size with (* FIXME inefficient *)
       | false -> {evictees=None; lim_state=c}
       | true -> 
@@ -107,17 +104,17 @@ module Internal(S:sig
         (* for non-dirty, we just remove from map; for dirty we
            must flush to lower *)        
         let evictees,lru_state = 
-          ([],c.lru_state,n) |> List_.iter_break (fun (es,s,n) -> 
+          ([],c.lru_state,n) |> iter_break (fun (es,s,n) -> 
               match n <= 0 with
-              | true -> `Break (es,s)
+              | true -> Break (es,s)
               | false -> 
                 L.pop_lru s |> function
-                | None -> `Break (es,s)
-                | Some ((k,e),s) -> `Continue((k,e)::es,s,(n-1)))
+                | None -> Break (es,s)
+                | Some ((k,e),s) -> Cont((k,e)::es,s,(n-1)))
         in
         (* now we have evictees, new queue, and new map *)
         let c = {c with lru_state} in
-        mark "cd";
+        (* mark "cd"; *)
         {evictees=(Some evictees);lim_state=c}
     in
 

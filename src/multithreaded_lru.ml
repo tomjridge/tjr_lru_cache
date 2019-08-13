@@ -55,9 +55,6 @@ open Mt_intf
 open Threading_types
 open Mt_state_type
 
-module Mt_profiler = Make_profiler()
-open Mt_profiler
-
 
 module Internal2 = struct
 
@@ -193,14 +190,14 @@ module Internal2 = struct
 
     let insert mode k v (callback: unit -> (unit,'t)m) =
       with_lru (fun ~lru ~set_lru -> 
-        mark "ab";
+        (* mark "ab"; *)
         lim_ops.insert k v lru.lim_state |> fun exc ->
-        mark "bc";
+        (* mark "bc"; *)
         (match exc.evictees with
          | None -> return ()
          | Some es -> to_lower (Evictees es)) >>= fun () ->
         (* handle mode=persist_now, lim_state *)
-        mark "cd";
+        (* mark "cd"; *)
         let lim_state,to_lower = 
           match mode with
           | Persist_now -> (
@@ -213,10 +210,10 @@ module Internal2 = struct
           | Persist_later -> (exc.lim_state,None)
         in
         maybe_to_lower to_lower >>= fun () ->
-        mark "de";
+        (* mark "de"; *)
         set_lru {lru with lim_state}) 
       >>= fun () ->
-      mark "ef";
+      (* mark "ef"; *)
       (* FIXME check the following *)
       (if mode=Persist_later then async(callback) else return ())
     in
