@@ -212,7 +212,7 @@ unit ->
     max_size; evict_count; lru_state = L.empty max_size;
 
     (* FIXME following v inefficient *)
-    compare_lru=(fun l1 l2 -> Pervasives.compare (L.to_list l1) (L.to_list l2))
+    compare_lru=(fun l1 l2 -> Stdlib.compare (L.to_list l1) (L.to_list l2))
   }
 
   let _ : unit -> (k, v, lru) Lru_in_mem_ops.lru_in_mem_ops = make_lru_in_mem
@@ -235,7 +235,7 @@ let _ : ('a, 'b, 'c) lru_fc -> ('a, 'b, 'c) Lru_in_mem_ops.lru_in_mem_ops
 let make_init_lim_state (type k v lru) ~max_size ~evict_count ~(lru_fc:(k,v,lru)lru_fc) = 
   let module L = (val lru_fc) in
   ({ max_size; evict_count; lru_state = L.empty max_size; 
-     compare_lru=(fun l1 l2 -> Pervasives.compare (L.to_list l1) (L.to_list l2))
+     compare_lru=(fun l1 l2 -> Stdlib.compare (L.to_list l1) (L.to_list l2))
    } : (k,v,lru)lim_state)
 
 let _ : max_size:int ->
@@ -251,7 +251,7 @@ module Int_int = struct
   module Internal = struct
     type nonrec k = k
     type nonrec v = v
-    let  compare : k -> k -> int = Pervasives.compare
+    let  compare : k -> k -> int = Stdlib.compare
   end
   include Make_lru_fc(Internal)
 
@@ -271,7 +271,7 @@ end
 
     module W = struct type t = v entry let weight: t->int = fun _ -> 1 end    
 
-    module Lru' = Lru.F.Make(struct type t = k let compare: k -> k -> int = Pervasives.compare end)(W)
+    module Lru' = Lru.F.Make(struct type t = k let compare: k -> k -> int = Stdlib.compare end)(W)
 
     type lru = Lru'.t
 

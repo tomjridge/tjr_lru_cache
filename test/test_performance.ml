@@ -42,7 +42,7 @@ let measure_execution_time_and_print s f =
 (** {2 Functional} *)
 
 module Lru_impl = Lru.F.Make
-    (struct type t = int let compare = Pervasives.compare end)
+    (struct type t = int let compare = Stdlib.compare end)
     (W)
 
 
@@ -170,7 +170,7 @@ let _ =
     open Im_intf
 
     let lru_ops = Lru_in_mem.Int_int.ops
-    (* let cache_map_ops=Tjr_map.make_map_ops Pervasives.compare *)
+    (* let cache_map_ops=Tjr_map.make_map_ops Stdlib.compare *)
 
     (* FIXME cap and evict count effect on performance??? *)
     let cache_state = ref @@ Lru_in_mem.Int_int.initial_state ~max_size:cap ~evict_count

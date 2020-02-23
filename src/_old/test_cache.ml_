@@ -29,12 +29,12 @@ module Test_state = struct
 
   (* FIXME v inefficient *)
   let compare s1 s2 = 
-    (Pervasives.compare 
+    (Stdlib.compare 
        (s1.spec |> Map_int.bindings) (s2.spec |> Map_int.bindings)) |> then_
       (fun () -> 
          Cache.compare s1.cache s2.cache) |> then_
       (fun () -> 
-         Map_int.compare Pervasives.compare s1.base_map s2.base_map)
+         Map_int.compare Stdlib.compare s1.base_map s2.base_map)
 
 end
 

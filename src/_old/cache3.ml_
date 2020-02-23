@@ -86,11 +86,11 @@ module Make = functor (S:S) -> struct
   (* a bit horrible! *)
   let compare c1 c2 = (
     assert (c1.max_size = c2.max_size);
-    (Pervasives.compare c1.current c2.current) |> then_
-      (fun () -> Pervasives.compare 
+    (Stdlib.compare c1.current c2.current) |> then_
+      (fun () -> Stdlib.compare 
           (c1.map |> Map.bindings)
           (c2.map |> Map.bindings)) |> then_
-      (fun () -> Pervasives.compare
+      (fun () -> Stdlib.compare
           (c1.queue |> Map_int.bindings)
           (c2.queue |> Map_int.bindings)))
 

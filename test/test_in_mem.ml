@@ -8,7 +8,7 @@ module Op = struct
   type op = Find of key | Insert of key * value | Delete of key
 end
 
-let compare_ints : int -> int -> int = Pervasives.compare
+let compare_ints : int -> int -> int = Stdlib.compare
 
 (*
 let k_cmp = compare_ints
@@ -37,10 +37,10 @@ module Test_state = struct
 
   (* FIXME v inefficient *)
   let compare s1 s2 = 
-    (Pervasives.compare 
+    (Stdlib.compare 
        (s1.spec |> Map_int.bindings) (s2.spec |> Map_int.bindings)) |> then_
       (fun () -> 
-        Pervasives.compare 
+        Stdlib.compare 
           (s1.cache.max_size,s1.cache.evict_count)
           (s2.cache.max_size,s2.cache.evict_count)) |> then_          
       (fun () -> 
