@@ -2,32 +2,42 @@
 
 (** 
 
-- Abbreviations: Im = In Memory; Lim = LRU In Mem; mt = MultiThreaded; fc = First-Class (module!); 
-
+Abbreviations: 
+  - Im = In Memory
+  - Lim = LRU In Mem
+  - mt = MultiThreaded
+  - fc = First-Class (module!); 
 *)
 
+(** NOTE {!Pvt_in_mem} module hidden *)
 
+(**/**)
 
 (** {2 In-memory version} *)
+module Pvt_in_mem = struct
 
-(** NOTE: No multithreading *)
+  (** NOTE: No multithreading *)
 
-module Im_intf = Im_intf
+  module Im_intf = Im_intf
+  (* open Im_intf *)
 
-module Lim_state = Im_intf.Lim_state
+  (* module Lim_state = Im_intf.Lim_state *)
 
-module Lru_in_mem_ops = Im_intf.Lru_in_mem_ops
+  (* module Lru_in_mem_ops = Im_intf.Lru_in_mem_ops *)
 
-module Lru_in_mem = Lru_in_mem
-open Lru_in_mem
+  module Lru_in_mem = Lru_in_mem
+  (* open Lru_in_mem *)
 
-let make_lru_in_mem_ops,make_init_lim_state = Lru_in_mem.(make_lru_in_mem_ops,make_init_lim_state)
+  (* let make_lru_in_mem_ops,make_init_lim_state = Lru_in_mem.(make_lru_in_mem_ops,make_init_lim_state) *)
 
 
 
-(** Common instances *)
-
-module Lim_int_int = Lru_in_mem.Int_int
+  module Lim_int_int = Lru_in_mem.Int_int
+  (** Common instance *)
+end
+open Pvt_in_mem
+open Pvt_in_mem.Lru_in_mem
+(**/**)
 
 
 (** {2 Multi-threaded version} *)
@@ -44,9 +54,14 @@ include Mt_intf.Persist_mode
 
 include Mt_intf.Mt_ops
 
+
+(**/**)
+
 module Multithreaded_lru = Multithreaded_lru
 
+
 (** {3 Construct the multithreaded LRU} *)
+
 
 (** NOTE see also {!Lru_in_mem.Make_lru_fc}; FIXME should also return
    an initial state to avoid remembering how to to construct this later *)
@@ -68,6 +83,9 @@ let make_multithreaded_lru
     ~to_lower
   in
   make_lru_ops ~monad_ops ~event_ops ~callback_ops
+(**/**)
+
+
 
 (** {3 Construct the multithreaded LRU (functor version)} *)
 
@@ -83,25 +101,48 @@ module type S = sig
   val event_ops: t Event.event_ops
 end
 
-      
+(** NOTE Msg_type and Mt_state_type included to improve usability, but hidden in doc *)
+
+(**/**)
+include Mt_intf.Msg_type
+include Mt_intf.Mt_state_type
+(**/**)
+
 module type T = sig
   type k
   type v
   type lru
   type t
   type t_map
-  type msg = (k,v,t) Mt_intf.Msg_type.msg
           
-  (* FIXME 'c should be fixed as t *)
-  type mt_state = (k, v, lru,t_map, t) Mt_intf.Mt_state_type.mt_state
+  (* open Im_intf *)
+  (* open Mt_intf.Mt_state_type *)
+  (* open Mt_intf.Threading_types *)
+
+  (** messages are flushed to the lower level, see make function below *)
+  type nonrec msg = (k,v,t)msg
+
+  type nonrec mt_state 
+    = (k, v, lru,t_map, t) mt_state
+(* FIXME why can't we expand this alias?    = {  lim_state: (k,v,lru) lim_state; 
+      blocked_threads: t_map;
+      blocked_threads_ops:(k,(v,t)blocked_thread list,t_map)Tjr_map.map_ops
+    } *)
+
+  val init_state :
+    max_size:int ->
+    evict_count:int ->
+    mt_state
+
+  type with_lru = (mt_state,t)with_lru_ops
 
   val make_multithreaded_lru :
-    ( (max_size:int -> evict_count:int -> mt_state), 
-    with_lru:(mt_state, t) Mt_intf.Mt_state_type.with_lru_ops ->
-    to_lower:(msg -> (unit, t) m) ->
-    (k, v, t) mt_ops)initial_state_and_ops
+    with_lru:with_lru ->
+    to_lower:(msg -> (unit, t) Tjr_monad.m) ->
+    (k, v, t) mt_ops
 end
 
+(** NOTE we expect the result of this Make to be bound to a module "Lru" or "Lru_" *)
 module Make(S:S) : T with type k = S.k and type v = S.v and type t = S.t = struct
   include S
   type msg = (k,v,t) Mt_intf.Msg_type.msg
@@ -114,13 +155,14 @@ module Make(S:S) : T with type k = S.k and type v = S.v and type t = S.t = struc
     = (k, (v, t) Mt_intf.Threading_types.blocked_thread list, unit) Tjr_map.map
 
   type mt_state = (k, v, lru,t_map, t) Mt_intf.Mt_state_type.mt_state
+
+  let init_state ~max_size ~evict_count = 
+    let initial_lim_state = Lru_in_mem.make_init_lim_state ~max_size ~evict_count ~lru_fc in
+    let compare_k = S.compare in
+    Mt_intf.Mt_state_type.mt_initial_state ~initial_lim_state ~compare_k
      
-  let make_multithreaded_lru = 
-    let initial_state ~max_size ~evict_count = 
-      let initial_lim_state = Lru_in_mem.make_init_lim_state ~max_size ~evict_count ~lru_fc in
-      let compare_k = S.compare in
-      Mt_intf.Mt_state_type.mt_initial_state ~initial_lim_state ~compare_k
-    in
-    let ops ~with_lru ~to_lower = make_multithreaded_lru ~lru_fc ~monad_ops ~async ~event_ops ~with_lru ~to_lower in
-    { initial_state; ops }
+  type with_lru = (mt_state,t)Mt_intf.Mt_state_type.with_lru_ops
+
+  let make_multithreaded_lru ~with_lru ~to_lower = 
+    make_multithreaded_lru ~lru_fc ~monad_ops ~async ~event_ops ~with_lru ~to_lower 
 end

@@ -206,7 +206,7 @@ unit ->
   (** Package up the operations in a record *)
   let make_lru_in_mem () = 
     make_cached_map () |> fun (find,insert,delete,sync_key) ->
-    Lru_in_mem_ops.{ find; insert; delete; sync_key }
+    { find; insert; delete; sync_key }
 
   let make_init_lim_state ~max_size ~evict_count  = {
     max_size; evict_count; lru_state = L.empty max_size;
@@ -215,7 +215,7 @@ unit ->
     compare_lru=(fun l1 l2 -> Stdlib.compare (L.to_list l1) (L.to_list l2))
   }
 
-  let _ : unit -> (k, v, lru) Lru_in_mem_ops.lru_in_mem_ops = make_lru_in_mem
+  let _ : unit -> (k, v, lru) lim_ops = make_lru_in_mem
 end
 
 let make_lru_in_mem_ops (type k v lru) lru_fc = 
@@ -229,7 +229,7 @@ let make_lru_in_mem_ops (type k v lru) lru_fc =
   let module I = Internal(S) in
   I.make_lru_in_mem ()
 
-let _ : ('a, 'b, 'c) lru_fc -> ('a, 'b, 'c) Lru_in_mem_ops.lru_in_mem_ops 
+let _ : ('a, 'b, 'c) lru_fc -> ('a, 'b, 'c) lim_ops
   = make_lru_in_mem_ops
 
 let make_init_lim_state (type k v lru) ~max_size ~evict_count ~(lru_fc:(k,v,lru)lru_fc) = 

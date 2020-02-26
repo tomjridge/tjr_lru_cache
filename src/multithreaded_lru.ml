@@ -129,7 +129,7 @@ module Internal2 = struct
 
   *)
   let make_lru_callback_ops
-        ~(lim_ops:('k,'v,'lru)Lru_in_mem_ops.lru_in_mem_ops) 
+        ~(lim_ops:('k,'v,'lru)lim_ops) 
         ~monad_ops 
         ~(async:'t async) 
         ~with_lru 
@@ -304,7 +304,7 @@ module Internal2 = struct
 end
 
 let make_lru_callback_ops :
-lim_ops:('k, 'v, 'lru) Lru_in_mem_ops.lru_in_mem_ops ->
+lim_ops:('k, 'v, 'lru) lim_ops ->
 monad_ops:'t monad_ops ->
 async:((unit -> (unit, 't) m) -> (unit, 't) m) ->
 with_lru:('mt_state, 't) with_lru_ops ->

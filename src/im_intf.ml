@@ -1,16 +1,12 @@
-(** Main interfaces *)
+(** Main lru-in-mem interfaces; usually don't open this *)
 
-module Entry = struct
+module Pvt_dirty = struct
+  (** Entries are marked using a bool; true means "this is dirty". *)
+  type dirty = bool
+end
+open Pvt_dirty
 
-  module Internal = struct
-    (** Entries are marked using a bool; true means "this is dirty". *)
-    type dirty = bool
-  end
-  open Internal
-
-  
-  module Export = struct
-    (** Cache map entries; values in the map are tagged with a
+(** Cache map entries; values in the map are tagged with a
     last-accessed time and a dirty flag
 
 Entries in the cache for key k:
@@ -29,14 +25,12 @@ Entries in the cache for key k:
 Additionally, each entry has a last-accessed time
 
  *)
-    type 'v entry = 
-      | Insert of { value: 'v; dirty:dirty }
-      | Delete of { dirty:dirty }
-      | Lower of 'v option
+type 'v entry = 
+  | Insert of { value: 'v; dirty:dirty }
+  | Delete of { dirty:dirty }
+  | Lower of 'v option
 
-  end
-  open Export
-  
+module Entry = struct
   let is_Lower = function Lower _ -> true | _ -> false 
 
   let mark_clean = function
@@ -48,16 +42,7 @@ Additionally, each entry has a last-accessed time
     | Insert {value;dirty} -> dirty
     | Delete {dirty} -> dirty
     | Lower vopt -> false
-
 end
-include Entry.Export
-(* open Entry.Internal *)
-
-
-
-
-module Lim_state = struct
-
 
 (** The LRU in-memory cache state consists of:
 
@@ -76,10 +61,6 @@ module Lim_state = struct
     lru_state:'lru;
     compare_lru:'lru -> 'lru -> int
   }
-end
-include Lim_state
-
-
 
 
 
@@ -92,23 +73,30 @@ type ('k,'v,'lru) evictees_x_lim_state = {
   lim_state: ('k,'v,'lru) lim_state
 }
 
-module Lru_in_mem_ops = struct
-
-
 (** This type is what is returned by the [make_lru_in_mem]
     function. 
 
     NOTE that [sync_key] performs only the in-mem updates (ie clearing
     the dirty flag). If you want to flush to disk, you have to do
     something else (see {!Lru_multithreaded}).
+
+    NOTE find returns a "maybe_in_cache", which consists of a function
+    which tries to retrieve from below, and then on return updates the
+    then-current lim_state (which may already have the entry...)
+
+    NOTE the interface tries to favour pure state passing; find is the
+    only routine which may need to call to disk
+
+    NOTE a struct so that we can scope record fields as Lim_ops.\{ ... \}
 *)
-  type ('k,'v,'lru) lru_in_mem_ops = {
+module Lim_ops = struct
+  type ('k,'v,'lru) lim_ops = {
     find: 'k -> ('k,'v,'lru) lim_state -> 
       ('v entry, 
        vopt_from_lower:'v option ->
        lim_state:('k, 'v,'lru) lim_state ->
        'v option * 
-         ('k,'v,'lru) evictees_x_lim_state ) maybe_in_cache;
+       ('k,'v,'lru) evictees_x_lim_state ) maybe_in_cache;
 
     insert: 'k -> 'v -> ('k,'v,'lru) lim_state ->
       ('k,'v,'lru) evictees_x_lim_state;
@@ -121,4 +109,4 @@ module Lru_in_mem_ops = struct
 
   }
 end
-(* include Lru_in_mem_ops ; NOTE not included by default *)
+include Lim_ops

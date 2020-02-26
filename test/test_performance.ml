@@ -166,7 +166,7 @@ let _ =
 let _ =
   if cap > 10000 then () else
   let module A = struct
-    open Tjr_lru_cache
+    (* open Tjr_lru_cache *)
     open Im_intf
 
     let lru_ops = Lru_in_mem.Int_int.ops

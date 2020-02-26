@@ -70,7 +70,7 @@ let base_find_opt k = fun t ->
   Map_int.find_opt k t
   
 
-let Lru_in_mem_ops.{find; insert; delete; _ } = ops
+let Lim_ops.{find; insert; delete; _ } = ops
 
 
 (* we modify find so that it utilises the base map *)
