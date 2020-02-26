@@ -130,7 +130,7 @@ NOTE Access to the [lru_state] is serialized via [with_lru].
   let mt_initial_state ~(initial_lim_state:('k,'v,'lru)lim_state) ~compare_k = 
     let lim_state = initial_lim_state in
     let blocked_threads_ops : ('k,('v,'t)blocked_thread list,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = 
-      Tjr_map.make_map_ops compare_k in
+      Tjr_map.unsafe_make_map_ops compare_k in
     {
       lim_state; 
       blocked_threads=blocked_threads_ops.empty;

@@ -1,4 +1,10 @@
-(** A multithreaded LRU cache (part of ImpFS). *)
+(** A multithreaded LRU cache (part of ImpFS; don't open)
+
+NOTE probably best not to open this module, because msg_type and entry
+have constructors like Insert etc that clash with others defined
+elsewhere
+
+ *)
 
 (** 
 
