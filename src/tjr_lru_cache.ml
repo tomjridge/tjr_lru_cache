@@ -101,9 +101,10 @@ module type S = sig
   val event_ops: t Event.event_ops
 end
 
-(** NOTE Msg_type and Mt_state_type included to improve usability, but hidden in doc *)
+(** NOTE Msg_type (part of external interface), Entry (part of msg) and Mt_state_type included to improve usability, but hidden in doc *)
 
 (**/**)
+type 'v entry = 'v Pvt_in_mem.Im_intf.entry
 include Mt_intf.Msg_type
 include Mt_intf.Mt_state_type
 (**/**)
