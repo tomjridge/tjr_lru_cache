@@ -144,6 +144,7 @@ compare_k:('k -> 'k -> int) ->
 mt_state
 = mt_initial_state
 
+(*
   type ('mt_state,'t) with_lru_ops = {
     with_lru: 
       'a. 
@@ -152,7 +153,7 @@ mt_state
          -> ('a,'t)m)
       -> ('a,'t)m
   }
-
+*)
 end
 (* open Mt_state_type *)
 
@@ -168,3 +169,5 @@ module Msg_type = struct
     | Evictees of ('k * 'v entry) list
 end
 (* include Msg_type *)
+
+

@@ -1,4 +1,4 @@
-(** A multithreaded / concurrent-safe implementation of the LRU
+(** Non-functorial multithreaded / concurrent-safe implementation of the LRU
    interface. This extends the in-memory explicit-state-passing code
    to the monad. 
 
@@ -54,6 +54,9 @@ open Im_intf
 open Mt_intf
 open Threading_types
 open Mt_state_type
+
+
+(** {2 Auxiliary defns} *)
 
 
 module Internal2 = struct
@@ -148,10 +151,10 @@ module Internal2 = struct
       | Some es -> Some (Evictees es)
     in
     let maybe_evictees_to_lower es = maybe_to_lower (evictees_to_msg_option es) in
-    let with_lru = with_lru.with_lru in
+    let with_lru = with_lru.with_state in
     let run_callbacks_for_key = run_callbacks_for_key ~monad_ops ~async in
     let find k (callback:'v option -> (unit,'t) m) = 
-      with_lru (fun ~lru ~set_lru -> 
+      with_lru (fun ~state:lru ~set_state:set_lru -> 
         (* check if k is already in the cache *)
         lim_ops.find k lru.lim_state |> function
         | In_cache e -> (
@@ -175,7 +178,7 @@ module Internal2 = struct
               (* we want to issue a `Find k call to lower, with a
                  callback that unblocks the waiting threads *)
               let callback vopt_from_lower : (unit,'t)m =                    
-                with_lru (fun ~lru ~set_lru -> 
+                with_lru (fun ~state:lru ~set_state:set_lru -> 
                   (* first wake up sleeping threads *)
                   run_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
                   kk ~vopt_from_lower ~lim_state:lru.lim_state 
@@ -189,7 +192,7 @@ module Internal2 = struct
 
 
     let insert mode k v (callback: unit -> (unit,'t)m) =
-      with_lru (fun ~lru ~set_lru -> 
+      with_lru (fun ~state:lru ~set_state:set_lru -> 
         (* mark "ab"; *)
         lim_ops.insert k v lru.lim_state |> fun exc ->
         (* mark "bc"; *)
@@ -219,7 +222,7 @@ module Internal2 = struct
     in
 
     let delete mode k callback = 
-      with_lru (fun ~lru ~set_lru -> 
+      with_lru (fun ~state:lru ~set_state:set_lru -> 
         lim_ops.delete k lru.lim_state 
         |> function exc ->
           (* update lru with evictees *)
@@ -243,7 +246,7 @@ module Internal2 = struct
     in
 
     let sync_key k callback = 
-      with_lru (fun ~lru ~set_lru -> 
+      with_lru (fun ~state:lru ~set_state:set_lru -> 
         lim_ops.sync_key k lru.lim_state |> function
         | Not_in_cache () -> async (callback)
         | In_cache (e,lim_state) ->             
@@ -307,7 +310,7 @@ let make_lru_callback_ops :
 lim_ops:('k, 'v, 'lru) lim_ops ->
 monad_ops:'t monad_ops ->
 async:((unit -> (unit, 't) m) -> (unit, 't) m) ->
-with_lru:('mt_state, 't) with_lru_ops ->
+with_lru:('mt_state, 't) with_state ->
 to_lower:(('k, 'v, 't) Msg_type.msg -> (unit, 't) m) ->
 ('k, 'v, 't) Mt_callback_ops.mt_callback_ops
 = Internal2.make_lru_callback_ops
@@ -318,3 +321,30 @@ event_ops:'t Event.event_ops ->
 callback_ops:('k, 'v, 't) Mt_callback_ops.mt_callback_ops ->
 ('k, 'v, 't) Mt_ops.mt_ops
 = Internal2.make_lru_ops
+
+
+
+(** {3 Construct the multithreaded LRU} *)
+
+(** Combine [make_lru_callback_ops] and [make_lru_ops]. *)
+
+(** NOTE see also {!Lru_in_mem.Make_lru_fc}; FIXME should also return
+   an initial state to avoid remembering how to to construct this later *)
+let make_multithreaded_lru
+  ~(lru_fc:('k,'v,'lru)lru_fc)
+  ~(monad_ops:'t monad_ops)
+  ~async
+  ~event_ops
+  ~with_lru
+  ~to_lower
+  =
+  (* let open Multithreaded_lru in *)
+  let lim_ops = Lru_in_mem.make_lru_in_mem_ops lru_fc in
+  let callback_ops = make_lru_callback_ops
+    ~lim_ops
+    ~monad_ops
+    ~async
+    ~with_lru
+    ~to_lower
+  in
+  make_lru_ops ~monad_ops ~event_ops ~callback_ops

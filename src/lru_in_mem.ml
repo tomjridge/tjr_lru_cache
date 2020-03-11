@@ -21,9 +21,6 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 open Im_intf
 
-
-type ('k,'v,'lru) lru_fc = (module Lru.F.S with type k='k and type v='v entry and type t='lru)
-
 module Make_lru_fc(S:sig
     type k 
     type v

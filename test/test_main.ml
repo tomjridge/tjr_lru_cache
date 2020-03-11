@@ -9,7 +9,7 @@ let main () =
   | [l;h] -> 
       let [l;h] = List.map int_of_string [l;h] in
       Test_in_mem.test (l--h) 
-  | _ -> failwith __LOC__
+  | _ -> let module X = Test_performance.Make() in ()
 [@@warning "-8"]
 
 let _ = main ()
