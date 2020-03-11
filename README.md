@@ -53,6 +53,12 @@ Following timings are in nanoseconds
 ~~~
 
 
+Note that from these timings, the pqwy imperative LRU implementation
+with batch eviction appears to be extremely good, allowing for around
+10M operations per second. [tjr_lru] is using the functional lru, and
+so is expected to be slower, at around 2M ops/s in this example. FIXME
+in production, the pqwy imperative version should be used.
+
 
 ## Quick links
 

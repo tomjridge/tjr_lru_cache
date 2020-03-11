@@ -22,4 +22,4 @@ run_performance_test:
 
 # for auto-completion of Makefile target
 clean::
-	rm *.exe
+	rm -f *.exe
