@@ -1,8 +1,6 @@
 (* open Tjr_lru_cache *)
 
-let from_to l h : int list = List_.from_to l h
-
-let (--) = from_to
+let (--) = List_.from_upto
 
 let main () = 
   match Array.to_list Sys.argv |> List.tl with
