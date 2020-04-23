@@ -161,7 +161,10 @@ end
 
 module Msg_type = struct
 
-  (** The type of messages that we send to the lower level *)
+  (** The type of messages that we send to the lower level. NOTE that
+     the callbacks are needed to implement the "persist now" mode,
+     i.e., to inform the caller when the operation has committed to
+     disk. *)
   type ('k,'v,'t) msg = 
       Insert of 'k*'v*(unit -> (unit,'t)m)
     | Delete of 'k*(unit -> (unit,'t)m)
