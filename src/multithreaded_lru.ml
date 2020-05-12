@@ -52,7 +52,7 @@ the pcache.
 open Im_intf
 (* open Lru_in_mem *)
 open Mt_intf
-open Threading_types
+(* open Threading_types *)
 open Mt_state_type
 
 
@@ -138,7 +138,7 @@ module Internal2 = struct
         ~with_lru 
         ~to_lower  
     =
-    let open Msg_type in
+    let open Lru_msg_type in
     let ( >>= ) = monad_ops.bind in 
     let return = monad_ops.return in
     let maybe_to_lower = function
@@ -273,11 +273,8 @@ module Internal2 = struct
       We now implement the standard (non-callback) interface, using events.
   *)
 
-  (** We assume that there is a way to "fulfill" an 'a m with an 'a  *)
-  type 't event_ops = 't Tjr_monad.Event.event_ops 
 
   let make_lru_ops ~monad_ops ~event_ops ~(callback_ops:('k,'v,'t)Mt_callback_ops.mt_callback_ops) =
-    let open Tjr_monad.Event in
     let ( >>= ) = monad_ops.bind in 
     let return = monad_ops.return in
     let Mt_callback_ops.{find;insert;delete;sync_key} = callback_ops in
@@ -311,13 +308,13 @@ lim_ops:('k, 'v, 'lru) lim_ops ->
 monad_ops:'t monad_ops ->
 async:((unit -> (unit, 't) m) -> (unit, 't) m) ->
 with_lru:('mt_state, 't) with_state ->
-to_lower:(('k, 'v, 't) Msg_type.msg -> (unit, 't) m) ->
+to_lower:(('k, 'v, 't) Lru_msg_type.lru_msg -> (unit, 't) m) ->
 ('k, 'v, 't) Mt_callback_ops.mt_callback_ops
 = Internal2.make_lru_callback_ops
 
 let make_lru_ops : 
 monad_ops:'t monad_ops ->
-event_ops:'t Event.event_ops ->
+event_ops:'t event_ops ->
 callback_ops:('k, 'v, 't) Mt_callback_ops.mt_callback_ops ->
 ('k, 'v, 't) Mt_ops.mt_ops
 = Internal2.make_lru_ops
@@ -348,3 +345,4 @@ let make_multithreaded_lru
     ~to_lower
   in
   make_lru_ops ~monad_ops ~event_ops ~callback_ops
+

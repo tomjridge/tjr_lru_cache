@@ -1,10 +1,11 @@
-(** A multithreaded LRU cache (part of ImpFS; don't open)
+(** A multithreaded LRU cache (part of ImpFS; safe to open)
 
-NOTE probably best not to open this module, because msg_type and entry
-have constructors like Insert etc that clash with others defined
-elsewhere
+NOTE Mt_ops may have field names that clash with those elsewhere
 
  *)
+
+(* NOTE tjr_lib has a simpler version of LRU, not multithreaded; we
+   need a bit more here *)
 
 (** 
 
@@ -16,43 +17,46 @@ Abbreviations:
 *)
 
 
-(** {2 Single-threaded version} *)
-
-module Im_intf = Im_intf
-
-module Lru_in_mem = Lru_in_mem
-(* open Lru_in_mem *)
-
-
-(** {2 Multi-threaded version} *)
-
-(** {3 Interfaces} *)
-
-module Mt_intf = Mt_intf
-
-(** {3 Persistence mode} *)
-
-(** NOTE hidden doc for include Persist_mode, now or later FIXME change to `Now or `Later *)
+(** NOTE hidden doc for private modules *)
 
 (**/**)
-include Mt_intf.Persist_mode
+
+(** Private modules *)
+module Pvt = struct
+
+  (** {2 Single-threaded version} *)
+
+  module Im_intf = Im_intf
+
+  module Lru_in_mem = Lru_in_mem
+  (* open Lru_in_mem *)
+
+  module Mt_intf = Mt_intf
+
+  module Multithreaded_lru = Multithreaded_lru
+
+  module Test_performance = Test_performance
+end
 (**/**)
 
 
-(** {3 The resulting multithreaded operations} *)
+include Im_intf.Entry_type
+
+type persist_mode = Mt_intf.persist_mode = Persist_later | Persist_now
 
 include Mt_intf.Mt_ops
 
+include Mt_intf.Lru_msg_type
 
-(** {3 Non-functorial mt impl} *)
-
-module Multithreaded_lru = Multithreaded_lru
+include Mt_intf.Lru_factory
 
 
-(** {3 Construct the multithreaded LRU (functor version)} *)
+module Make_1 = Make_1
 
-module Make = Make
+module Make_2 = Make_2
 
-(** {2 Performance testing} *)
+module Make_3 = Make_3
 
-module Test_performance = Test_performance
+module Make = Make_3
+
+

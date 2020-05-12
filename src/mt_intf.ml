@@ -71,14 +71,6 @@ include Mt_ops
 module Threading_types = struct
   (* type for the async operation FIXME move to Tjr_monad *)
 
-  (** The async operation completes with unit almost immediately; the
-      argument may be a long-running computation; it is scheduled for
-      execution.
-
-      Because even creating an 'a m in lwt schedules computation, we
-      shield the argument to async to avoid computation.  *)
-  type 't async = (unit -> (unit,'t) m) -> (unit,'t) m 
-
   (** We want to store "blocked threads" in a map, indexed by key; we use
      a polymap; the threads are of type 'v -> ('a,'t) m; the 'a return
      type can just be unit, since a thread can launch some other thread
@@ -159,18 +151,54 @@ end
 
 
 
-module Msg_type = struct
+module Lru_msg_type = struct
 
   (** The type of messages that we send to the lower level. NOTE that
      the callbacks are needed to implement the "persist now" mode,
      i.e., to inform the caller when the operation has committed to
      disk. *)
-  type ('k,'v,'t) msg = 
+  type ('k,'v,'t) lru_msg = 
       Insert of 'k*'v*(unit -> (unit,'t)m)
     | Delete of 'k*(unit -> (unit,'t)m)
     | Find of 'k * ('v option -> (unit,'t)m)
     | Evictees of ('k * 'v entry) list
 end
+open Lru_msg_type
 (* include Msg_type *)
 
+module Lru_factory = struct
+  
+  (** This is the eventual interface provided by [Make]. NOTE this
+     type is unreadable in odoc *)
+  type ('k,'v,'lru,'t) lru_factory = <
+    max_size: int;
+    evict_count: int;
+    empty: 'lru;
+    make: 
+      with_lru:('lru,'t) with_state ->
+      to_lower:(('k,'v,'t)lru_msg -> (unit,'t)m) -> 
+      ('k,'v,'t)mt_ops;
+    make_with_ref:
+      to_lower:(('k,'v,'t)lru_msg -> (unit,'t)m) -> 
+      < ops:('k,'v,'t)mt_ops;
+        lru_ref:'lru ref;
+        with_lru: ('lru,'t) with_state >
+  >
+(** {[
+  type ('k,'v,'lru,'t) lru_factory = <
+    size: int;
+    evict_count: int;
+    empty: 'lru;
+    make: 
+      with_lru:('lru,'t) with_state ->
+      to_lower:(('k,'v,'t)lru_msg -> (unit,'t)m) -> 
+      ('k,'v,'t)mt_ops;
+    make_with_ref:
+      to_lower:(('k,'v,'t)lru_msg -> (unit,'t)m) -> 
+      < ops:('k,'v,'t)mt_ops;
+        lru_ref:'lru ref;
+        with_lru: ('lru,'t) with_state >
+  >
+]} *)
 
+end

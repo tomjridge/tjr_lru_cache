@@ -5,10 +5,6 @@ We assume all operations complete quickly from the cache. Operations
    that need to go to disk are modelled using explicit continuation
    passing.
 
-We allow values to be tagged with extra info (this will be used to
-   record whether the value needs to be flushed to the lower
-   level). ?FIXME
-
 The difficulty is how to extend this to deal with disk-backed
    eviction.
 

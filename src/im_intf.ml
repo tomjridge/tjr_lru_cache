@@ -3,30 +3,28 @@
 
 (** {2 Cache entries} *)
 
-module Pvt_dirty = struct
-  (** Entries are marked using a bool; true means "this is dirty". *)
-  type dirty = bool
+module Entry_type = struct
+
+  (** Cache map entries; values in the map are tagged with a
+      last-accessed time (via underlying Lru impl) and a dirty flag
+
+      Entries in the cache for key k:
+
+      - (Insert v (dirty=true/false)), {i this occurs on insert}
+      - (Delete   (dirty=true/false))
+      - (Lower vopt), {i this occurs when we check the lower layer for a
+        non-existing entry in cache; if we find a value, we insert Lower
+        (Some v), else Lower None; in either case, there is no need to do
+        anything further (ie the entry is not dirty) }
+      - (No entry), {i for a key that hasn't been seen before}
+
+  *)
+  type 'v entry = 
+    | Insert of { value: 'v; dirty:bool }
+    | Delete of { dirty:bool }
+    | Lower of 'v option
 end
-open Pvt_dirty
-
-(** Cache map entries; values in the map are tagged with a
-    last-accessed time (via underlying Lru impl) and a dirty flag
-
-Entries in the cache for key k:
-
-- (Insert v (dirty=true/false)), {i this occurs on insert}
-- (Delete   (dirty=true/false))
-- (Lower vopt), {i this occurs when we check the lower layer for a
-    non-existing entry in cache; if we find a value, we insert Lower
-    (Some v), else Lower None; in either case, there is no need to do
-    anything further (ie the entry is not dirty) }
-- (No entry), {i for a key that hasn't been seen before}
-
- *)
-type 'v entry = 
-  | Insert of { value: 'v; dirty:dirty }
-  | Delete of { dirty:dirty }
-  | Lower of 'v option
+include Entry_type
 
 (** Auxiliary functions for entries *)
 module Entry = struct
@@ -89,7 +87,6 @@ type ('k,'v,'lru) evictees_x_lim_state = {
     NOTE the interface tries to favour pure state passing; find is the
     only routine which may need to call to disk
 *)
-(* module Lim_ops = struct *)
 type ('k,'v,'lru) lim_ops = {
   find: 'k -> ('k,'v,'lru) lim_state -> 
     ('v entry, 
@@ -108,8 +105,6 @@ type ('k,'v,'lru) lim_ops = {
     ('v entry * ('k, 'v,'lru) lim_state, unit) maybe_in_cache
 
 }
-(* end *)
-(* include Lim_ops *)
 
 module Lru_fc = struct
   type ('k,'v,'lru) lru_fc = (module Lru.F.S with type k='k and type v='v entry and type t='lru)

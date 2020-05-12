@@ -1,4 +1,5 @@
-(** Tests for the in-mem cache ---------------------------------- *)
+(** Tests for the in-mem cache  *)
+
 open Lru_in_mem
 
 type key = int
