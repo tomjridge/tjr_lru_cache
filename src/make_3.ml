@@ -27,9 +27,9 @@ module Make(S:S) : T with type k = S.k and type v = S.v and type t = S.t = struc
   include S
   module S1 = struct
     include S
-    let monad_ops = Sh_std_ctxt.monad_ops
-    let async = Sh_std_ctxt.async
-    let event_ops = Sh_std_ctxt.event_ops
+    let monad_ops = Shared_ctxt.monad_ops
+    let async = Shared_ctxt.async
+    let event_ops = Shared_ctxt.event_ops
     let compare = k_cmp
   end
   module M2 = Make_2.Make(S1)
