@@ -1,5 +1,5 @@
-(executables
-  (names test_main)
+(executable
+  (name lru_test_main)
   (libraries tjr_lru_cache lru tjr_profile containers minicli))
 
 (env
