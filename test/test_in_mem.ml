@@ -1,3 +1,5 @@
+(* FIXME resurrect this
+
 (** Tests for the in-mem cache  *)
 
 open Lru_in_mem
@@ -18,7 +20,7 @@ open Tjr_map
 let make_map_ops () = Tjr_map.make_map_ops k_cmp
 *)
 
-let ops,initial_state = Lru_in_mem.Int_int.(ops,initial_state)
+let ops,initial_state = Lru_in_mem.Examples.Int_int.(ops,initial_state)
 
 module Test_state = struct 
   (* the spec state is the combined view of the cache and the base map ? *)
@@ -193,3 +195,4 @@ let test range =
   print_string "\n\n";
 
 
+*)

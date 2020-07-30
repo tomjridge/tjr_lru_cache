@@ -8,6 +8,11 @@ Abbreviations:
 Main types:
 
 {[
+  type 'v entry = 
+    | Insert of { value: 'v; dirty:bool }
+    | Delete of { dirty:bool }
+    | Lower of 'v option
+
   type ('k,'v,'lru,'t) lru_factory = <
     empty :       
       max_size    : int -> 

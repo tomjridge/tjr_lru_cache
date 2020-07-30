@@ -19,7 +19,7 @@ module Entry = struct
       - (No entry), {i for a key that hasn't been seen before}
 
   *)
-  (* \$(PIPE2SH("""sed -n '/type[ ].*entry = /,/option/p' >GEN.entry.ml_""")) *)
+  (* $(PIPE2SH("""sed -n '/type[ ].*entry = /,/option/p' >GEN.entry.ml_""")) *)
   type 'v entry = 
     | Insert of { value: 'v; dirty:bool }
     | Delete of { dirty:bool }

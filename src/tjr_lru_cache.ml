@@ -11,24 +11,27 @@ include Summary
 (**/**)
 
 (** Private modules *)
-module Pvt = struct
 
-  (** {2 Single-threaded version} *)
+(** {2 Single-threaded version} *)
+module Im_intf = Im_intf
+    
+module Lru_in_mem = Lru_in_mem
 
-  module Im_intf = Im_intf
-
-  module Lru_in_mem = Lru_in_mem
-
-  module Test_performance = Test_performance
-end
+module Test_performance = Test_performance
 (**/**)
+
+(** NOTE module renamed from Entry *)
+module Lru_entry = Im_intf.Entry
+
 module Mt_intf = Mt_intf
 
 type persist_mode = Mt_intf.persist_mode = Persist_later | Persist_now
 
 module Lru_msg = Mt_intf.Lru_msg
+type ('k,'v,'t) lru_msg = ('k,'v,'t) Lru_msg.lru_msg
 
 module Lru_factory = Mt_intf.Lru_factory
+type ('k,'v,'lru,'t) lru_factory = ('k,'v,'lru,'t) Lru_factory.lru_factory
 
 module Mt_ops = Mt_intf.Mt_ops
 
