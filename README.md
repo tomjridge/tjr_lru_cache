@@ -35,7 +35,8 @@ Tjr_kv architecture:
 ## Performance testing
 
 In directory test/ there are various test programs. One does
-exhaustive testing. The other does performance testing. Type `make run_performance_test` to see the output, which resembles:
+exhaustive testing. The other does performance testing. Type `make
+run_performance_test` to see the output, which resembles:
 
 ~~~
 find _build -name "test_main.exe" -exec cp \{\} . \;
@@ -62,9 +63,11 @@ in production, the pqwy imperative version should be used.
 
 ## Quick links
 
-* [ocamldoc documentation](https://tomjridge.github.io/tjr_lru_cache/)
-* <https://github.com/pqwy/lru> - the in-memory code now uses this LRU implementation
-* <https://github.com/tomjridge/tjr_kv> - the tjr_kv key-value store library
+* [ocamldoc documentation](https://tomjridge.github.io/ocamldocs/)
+* <https://github.com/pqwy/lru> - the in-memory code now uses this LRU
+  implementation
+* <https://github.com/tomjridge/tjr_kv> - the tjr_kv key-value store
+  library
 
 
 
@@ -73,6 +76,5 @@ in production, the pqwy imperative version should be used.
 | Dependency            | Comment                 |
 | --------------------- | ----------------------- |
 | tjr_fs_shared         | Common library          |
-| tjr_profile_with_core | For testing / profiling |
 | minicli, containers   | For testing             |
 

@@ -14,9 +14,16 @@ test_exe lru_test_main.exe &: FORCE
 run_tests: lru_test_main.exe
 	./lru_test_main.exe 1 6
 
-run_performance_test: test_main.exe
+run_performance_test: lru_test_main.exe
 	./lru_test_main.exe -count 10000 -cap 100 -evict 10
+
+update_generated_doc::
+	cd src && (ocamldoc_pyexpander im_intf.ml)
+	cd src && (ocamldoc_pyexpander mt_intf.ml)
+	cd src && (ocamldoc_pyexpander summary.t.ml > summary.ml)
+
 
 # for auto-completion of Makefile target
 clean::
 	rm -f *.exe
+	rm -f src/GEN.*

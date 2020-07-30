@@ -17,6 +17,234 @@ NOTE that the operations occur not in a monad - instead, explicit
 
 open Im_intf
 
+module type S = sig
+  type k
+  type v
+  val k_cmp : k -> k -> int
+end
+
+module type T = sig
+  module S:S
+  open S
+  type lru
+
+  val lru_ops_im : (k, v, lru) lru_ops_im 
+
+  val make_init_lru_state_im : 
+    max_size:int -> evict_count:int -> lru lru_state_im
+end
+
+
+(** With full sig *)
+module Make_v1(S:S) = struct
+  module S=S
+  open S
+
+  (** Construct the LRU *)
+
+  module W = struct type t = v entry let weight: t->int = fun _ -> 1 end    
+
+  module L = Lru.F.Make(struct type t = k let compare: k -> k -> int = compare end)(W)
+      
+  type lru = L.t
+
+  (* NOTE evictees are removed from the map, so no need to mark clean *)
+  
+  (** Attempt to locate key in cache. FIXME inline *)
+  let find_in_cache (k:k) (c:lru lru_state_im) = 
+    L.find k c.lru_state |> function
+    | None -> None,c
+    | Some e -> (Some e,c)
+
+  let _ = find_in_cache
+
+
+  (** An exception, for quick abort. FIXME remove *)
+  exception E_
+
+  (** Type abbrev for find *)
+  type maybe_in_cache_f = 
+    (W.t,
+     vopt_from_lower:v option ->
+     lru_state_im:lru lru_state_im ->
+     v option * (k, v, lru) Tjr_lru_cache__.Im_intf.evictees_x_state)
+      Tjr_lru_cache__.Im_intf.maybe_in_cache
+
+  (** Construct the cached map, using existing map find operation.
+
+      NOTE the idea for [find] is that we execute a quick step to handle the
+      case that there is an entry in the cache. If there isn't, we make a
+      slow call to the lower layer, and when the result arrives we make
+      another update to the cache state with the then current state of
+      the cache. To avoid the risk of stale results being returned from
+      lower, we have to tag lower results with some kind of
+      monotonically-increasing index.
+  *)
+  module Make_cached_map = struct
+
+    (* Returns None if no evictees need to be flushed, or Some(evictees)
+        otherwise *)
+    let get_evictees (c:lru lru_state_im) : (k, v, lru) evictees_x_state = 
+      (* mark "ab"; *)
+      let card = L.size c.lru_state in
+      (* mark "bc"; *)
+      match card > c.max_size with (* FIXME inefficient *)
+      | false -> {evictees=None; lru_state_im=c}
+      | true -> 
+        (* how many to evict? *)
+        let n = c.evict_count in
+        (* for non-dirty, we just remove from map; for dirty we
+           must flush to lower *)        
+        let evictees,lru_state = 
+          ([],c.lru_state,n) |> iter_break (fun (es,s,n) -> 
+              match n <= 0 with
+              | true -> Break (es,s)
+              | false -> 
+                L.pop_lru s |> function
+                | None -> Break (es,s)
+                | Some ((k,e),s) -> Cont((k,e)::es,s,(n-1)))
+        in
+        (* now we have evictees, new queue, and new map *)
+        let c = {c with lru_state} in
+        (* mark "cd"; *)
+        {evictees=(Some evictees);lru_state_im=c}
+
+
+    (* NOTE that if find pulls an entry into the cache, we may have to
+         get rid of evictees; so a read causes a write; but this should be
+         relatively infrequent *)
+    let find (k:k) c : maybe_in_cache_f = 
+      find_in_cache k c |> fun (v,c) -> 
+      match v with
+      | None -> 
+        Not_in_cache (fun ~vopt_from_lower ~lru_state_im:(c:lru lru_state_im) ->
+            (* need to update map before returning *)
+            (* FIXME concurrency concerns: v may be stale if we get from
+               lower, but cache updated in meantime *)
+            let new_entry = Lower vopt_from_lower in
+            let c = { c with lru_state=L.add k new_entry c.lru_state } in
+            (* also may need to evict *)
+            get_evictees c |> fun exc ->
+            (vopt_from_lower, exc))
+      | Some v -> In_cache v
+
+    let _ = find
+
+
+    (* FIXME TODO we need to also handle the cases where we flush to
+       lower immediately *)
+
+    
+    (* [perform] is to factor out the insert/delete commonality NOTE
+       entry_type is not Lower *)
+    let perform k entry c = 
+      assert(not (Entry.is_Lower entry));
+      let c = {c with lru_state=(L.add k entry c.lru_state) } in
+      get_evictees c
+
+    let _ = perform
+
+    let insert k v c = perform k (Insert {value=v; dirty=true }) c
+
+    let _ = insert
+
+    (* TODO make insert_many more efficient *)
+    (* let insert_many k v kvs c = insert k v c |> fun c -> (kvs,c) in *)
+
+    let delete k c = perform k (Delete {dirty=true}) c
+
+    type maybe_in_cache_s = (W.t * lru lru_state_im, unit) maybe_in_cache
+
+    (* NOTE for in_cache case, this returns the old (possibly dirty)
+       entry; if indeed the entry is dirty we can flush to lower *)
+    let sync_key k (c:lru lru_state_im) : maybe_in_cache_s = 
+      (* FIXME do we want to change the time? *)
+      (* if present, change dirty bit and return entry type; NOTE the
+         entry must be flushed to lower somehow - this only deals with
+         the local change *)
+      L.find k c.lru_state |> function
+      | None -> Not_in_cache ()
+      | Some e -> 
+        let e' = Entry.mark_clean e in
+        L.add k e' c.lru_state |> fun lru_state ->
+        (* NOTE this returns the old entry *)
+        In_cache(e,{c with lru_state})
+
+    let (_ : k -> lru lru_state_im -> (W.t * lru lru_state_im, unit) maybe_in_cache)
+      = sync_key
+    
+  end
+
+
+
+
+  (* export as record ------------------------------------------------- *)
+
+  (** Package up the operations in a record *)
+  let lru_ops_im = 
+    let open Make_cached_map in     
+    Lru_ops_im.{ find; insert; delete; sync_key }
+
+  let _ : (k, v, lru) lru_ops_im = lru_ops_im
+
+  let make_init_lru_state_im ~max_size ~evict_count  = {
+    max_size; evict_count; lru_state = L.empty max_size;
+    compare_lru=(fun l1 l2 -> Stdlib.compare (L.to_list l1) (L.to_list l2))
+    (* FIXME compare_lru v inefficient *)
+  }
+
+  let _ :
+max_size:int -> evict_count:int -> lru lru_state_im
+= make_init_lru_state_im
+
+end
+
+module Make_v2(S:S) : T with module S=S = struct
+  include Make_v1(S)
+end
+
+module Make = Make_v2
+
+module Examples = struct
+  (** Don't open this directly; use [Int_int.ops] etc *)
+  module Int_int = struct
+    module S = struct
+      type k = int
+      type v = int
+      let k_cmp = Int_.compare
+    end
+    module M = Make(S)
+    open M
+    type lru = M.lru
+    let lru_ops_im = lru_ops_im
+    let make_init_lru_state_im = make_init_lru_state_im
+  end
+end
+(* FIXME other common instances *)  
+
+
+(*
+  module Internal = struct
+
+    module W = struct type t = v entry let weight: t->int = fun _ -> 1 end    
+
+    module Lru' = Lru.F.Make(struct type t = k let compare: k -> k -> int = Stdlib.compare end)(W)
+
+    type lru = Lru'.t
+
+    let lru_fc = (module Lru' : Lru.F.S with type k=k and type v=v entry and type t=lru) 
+
+  end
+
+  type lru = Internal.lru
+
+  let lru_fc : (k,v,lru) lru_fc = Internal.lru_fc
+*)
+
+
+
+
+(*
 module Make_lru_fc(S:sig
     type k 
     type v
@@ -36,181 +264,11 @@ module Make_lru_fc(S:sig
 
   let lru_fc = (module Lru' : Lru.F.S with type k=k and type v=v entry and type t=lru) 
 end
-
-module Internal(S:sig
-    type k
-    type v
-    type lru
-    val lru_fc : (k,v,lru)lru_fc
-  end) = struct
-
-  open S
-
-  (* NOTE evictees are removed from the map, so no need to mark clean *)
-
-  (* module W = struct type t = v entry let weight: t->int = fun _ -> 1 end *)
-
-  module L = (val lru_fc)
-
-  type lru = L.t
-
-  (* type cs = (k,v,lru) lim_state *)
-  
-  (** Attempt to locate key in cache. FIXME inline *)
-  let find_in_cache (k:k) (c:(k,v,lru)lim_state) = 
-    L.find k c.lru_state |> function
-    | None -> None,c
-    | Some e -> (Some e,c)
-
-
-  let _ = find_in_cache
+*)
 
 
 
-  (** An exception, for quick abort. FIXME remove *)
-  exception E_
-
-
-  (** Construct the cached map, using existing map find operation.
-
-      NOTE the idea for [find] is that we execute a quick step to handle the
-      case that there is an entry in the cache. If there isn't, we make a
-      slow call to the lower layer, and when the result arrives we make
-      another update to the cache state with the then current state of
-      the cache. To avoid the risk of stale results being returned from
-      lower, we have to tag lower results with some kind of
-      monotonically-increasing index.
-  *)
-  let make_cached_map () =
-
-    (* Returns None if no evictees need to be flushed, or Some(evictees)
-        otherwise *)
-    let get_evictees (c:(k,v,lru)lim_state) : (k, v, lru) evictees_x_lim_state = 
-      (* mark "ab"; *)
-      let card = L.size c.lru_state in
-      (* mark "bc"; *)
-      match card > c.max_size with (* FIXME inefficient *)
-      | false -> {evictees=None; lim_state=c}
-      | true -> 
-        (* how many to evict? *)
-        let n = c.evict_count in
-        (* for non-dirty, we just remove from map; for dirty we
-           must flush to lower *)        
-        let evictees,lru_state = 
-          ([],c.lru_state,n) |> iter_break (fun (es,s,n) -> 
-              match n <= 0 with
-              | true -> Break (es,s)
-              | false -> 
-                L.pop_lru s |> function
-                | None -> Break (es,s)
-                | Some ((k,e),s) -> Cont((k,e)::es,s,(n-1)))
-        in
-        (* now we have evictees, new queue, and new map *)
-        let c = {c with lru_state} in
-        (* mark "cd"; *)
-        {evictees=(Some evictees);lim_state=c}
-    in
-
-
-    (* NOTE that if find pulls an entry into the cache, we may have to
-         get rid of evictees; so a read causes a write; but this should be
-         relatively infrequent *)
-    let find (k:k) c = 
-      find_in_cache k c |> fun (v,c) -> 
-      match v with
-      | None -> 
-        Not_in_cache (fun ~vopt_from_lower ~lim_state:(c:(k,v,lru)lim_state) ->
-          (* need to update map before returning *)
-          (* FIXME concurrency concerns: v may be stale if we get from
-             lower, but cache updated in meantime *)
-          let new_entry = Lower vopt_from_lower in
-          let c = { c with lru_state=L.add k new_entry c.lru_state } in
-          (* also may need to evict *)
-          get_evictees c |> fun exc ->
-          (vopt_from_lower, exc))
-      | Some v -> In_cache v
-    in
-
-    let _ = find in
-
-
-    (* FIXME TODO we need to also handle the cases where we flush to
-       lower immediately *)
-
-    
-    (* [perform] is to factor out the insert/delete commonality NOTE
-       entry_type is not Lower *)
-    let perform k entry c = 
-      assert(not (Entry.is_Lower entry));
-      let c = {c with lru_state=(L.add k entry c.lru_state) } in
-      get_evictees c
-    in
-
-    let insert k v c = perform k (Insert {value=v; dirty=true }) c in
-
-    (* TODO make insert_many more efficient *)
-    (* let insert_many k v kvs c = insert k v c |> fun c -> (kvs,c) in *)
-
-    let delete k c = perform k (Delete {dirty=true}) c in
-
-    (* NOTE for in_cache case, this returns the old (possibly dirty)
-       entry; if indeed the entry is dirty we can flush to lower *)
-    let sync_key k (c:(k,v,lru)lim_state) = 
-      (* FIXME do we want to change the time? *)
-      (* if present, change dirty bit and return entry type; NOTE the
-         entry must be flushed to lower somehow - this only deals with
-         the local change *)
-      L.find k c.lru_state |> function
-      | None -> Not_in_cache ()
-      | Some e -> 
-        let e' = Entry.mark_clean e in
-        L.add k e' c.lru_state |> fun lru_state ->
-        (* NOTE this returns the old entry *)
-        In_cache(e,{c with lru_state})
-    in
-
-    let _ = sync_key in
-
-    (find,insert,delete,sync_key)
-
-
-
-  let _ : 
-unit ->
-(k ->
- (k, v, lru) lim_state ->
- (L.v,
-  vopt_from_lower:v option ->
-  lim_state:(k, v, lru) lim_state ->
-  v option * (k, v, lru) evictees_x_lim_state)
- maybe_in_cache) *
-(k -> v -> ('a, 'b, lru) lim_state -> (k, v, lru) evictees_x_lim_state) *
-(k -> ('c, 'd, lru) lim_state -> (k, v, lru) evictees_x_lim_state) *
-(k ->
- (k, v, lru) lim_state ->
- (L.v * ('e, 'f, lru) lim_state, unit) maybe_in_cache)
-    = make_cached_map
-
-
-
-  (* export as record ------------------------------------------------- *)
-
-
-  (** Package up the operations in a record *)
-  let make_lru_in_mem () = 
-    make_cached_map () |> fun (find,insert,delete,sync_key) ->
-    { find; insert; delete; sync_key }
-
-  let make_init_lim_state ~max_size ~evict_count  = {
-    max_size; evict_count; lru_state = L.empty max_size;
-
-    (* FIXME following v inefficient *)
-    compare_lru=(fun l1 l2 -> Stdlib.compare (L.to_list l1) (L.to_list l2))
-  }
-
-  let _ : unit -> (k, v, lru) lim_ops = make_lru_in_mem
-end
-
+(*
 let make_lru_in_mem_ops (type k v lru) lru_fc = 
   let module S = struct
     type nonrec k=k
@@ -234,45 +292,5 @@ let make_init_lim_state (type k v lru) ~max_size ~evict_count ~(lru_fc:(k,v,lru)
 let _ : max_size:int ->
 evict_count:int -> lru_fc:('a, 'b, 'c) lru_fc -> ('a, 'b, 'c) lim_state
 = make_init_lim_state
-  
-
-(** Don't open this directly; use [Int_int.ops] etc *)
-module Int_int = struct
-  type k = int
-  type v = int
-
-  module Internal = struct
-    type nonrec k = k
-    type nonrec v = v
-    let  compare : k -> k -> int = Stdlib.compare
-  end
-  include Make_lru_fc(Internal)
-
-
-  let ops = make_lru_in_mem_ops lru_fc
-  let _ = ops
-
-  let initial_state ~max_size ~evict_count = make_init_lim_state ~max_size ~evict_count ~lru_fc
-  let _ = initial_state
-end
-
-(* FIXME other common instances *)  
-
-
-(*
-  module Internal = struct
-
-    module W = struct type t = v entry let weight: t->int = fun _ -> 1 end    
-
-    module Lru' = Lru.F.Make(struct type t = k let compare: k -> k -> int = Stdlib.compare end)(W)
-
-    type lru = Lru'.t
-
-    let lru_fc = (module Lru' : Lru.F.S with type k=k and type v=v entry and type t=lru) 
-
-  end
-
-  type lru = Internal.lru
-
-  let lru_fc : (k,v,lru) lru_fc = Internal.lru_fc
 *)
+  

@@ -189,11 +189,11 @@ module Make() = struct
         (* open Tjr_lru_cache *)
         open Im_intf
 
-        let lru_ops = Lru_in_mem.Int_int.ops
+        let lru_ops = Lru_in_mem.Examples.Int_int.lru_ops_im
         (* let cache_map_ops=Tjr_map.make_map_ops Stdlib.compare *)
 
         (* FIXME cap and evict count effect on performance??? *)
-        let cache_state = ref @@ Lru_in_mem.Int_int.initial_state ~max_size:cap ~evict_count
+        let cache_state = ref @@ Lru_in_mem.Examples.Int_int.make_init_lru_state_im ~max_size:cap ~evict_count
 
         let l = lru_ops
 
@@ -201,7 +201,7 @@ module Make() = struct
           measure_execution_time_and_print "tjr_lru with automatic evict if over cap" @@ fun () -> 
           for i = 1 to count do
             l.insert i (2*i) !cache_state |> fun exc -> 
-            cache_state:=exc.lim_state
+            cache_state:=exc.lru_state_im
           done
       end
       in
