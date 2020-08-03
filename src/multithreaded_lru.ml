@@ -69,11 +69,14 @@ module Make(S:S) = struct
   (** {2 Util} *)
 
   (** NOTE the following, which essentially adds waiting threads to a
-      wait queue, and notifies them when an event occurs, is a
-      re-implementation of a concurrency staple (eg Lwt tasks); the
-      implementation here is explicit because we may want to verify the
-      implementation using the local state [blocked_threads] (rather than
-      some generic version provided by the monad) *)
+     wait queue, and notifies them when an event occurs, is a
+     re-implementation of a concurrency staple (eg Lwt tasks); the
+     implementation here is explicit because we may want to verify the
+     implementation using the local state [blocked_threads] (rather
+     than some generic version provided by the monad)
+
+      NOTE there is no entry in the blocked_threads iff there is no
+     lower call in progress *)
   let add_callback_on_key ~callback ~k ~lru = 
     let m = lru.blocked_threads_ops in
     match m.find_opt k lru.blocked_threads with
@@ -83,6 +86,7 @@ module Make(S:S) = struct
       let blocked_threads = m.add k xs lru.blocked_threads in
       { lru with blocked_threads },`Lower_call_in_progress
     | None -> 
+      Printf.printf "%s: add_callback_on_key\n%!" __FILE__;
       let blocked_threads = m.add k [callback] lru.blocked_threads in
       (* we want to issue a `Find k call to lower, with a callback that
          unblocks the waiting threads *)
@@ -92,7 +96,12 @@ module Make(S:S) = struct
   let run_callbacks_for_key ~k ~vopt_from_lower ~lru =
     let m = lru.blocked_threads_ops in
     let blocked_threads = m.find_opt k lru.blocked_threads in
-    assert(blocked_threads <> None);                    
+    assert(
+      match blocked_threads with
+      | Some _ -> true
+      | None -> 
+        Printf.printf "blocked_threads is None\n%!";
+        false);                    
     let blocked_threads = blocked_threads |> dest_Some in
     let rec loop bs = 
       match bs with
@@ -146,33 +155,24 @@ module Make(S:S) = struct
       let maybe_to_lower = function
         | None -> return ()
         | Some msg -> to_lower msg
-      
+                        
       let evictees_to_msg_option = function
-        | None -> None
-        | Some [] -> failwith __LOC__  (* assume evictees are never [] *)
-        | Some es -> Some (Evictees es)
+        | [] -> None
+        | es -> Some (Evictees es)
       
       let maybe_evictees_to_lower es = maybe_to_lower (evictees_to_msg_option es)
+          
+      let _ : (k, v) kvop list -> (unit, t) m = maybe_evictees_to_lower      
 
       let with_lru = with_lru.with_state
 
-      (* let run_callbacks_for_key = run_callbacks_for_key ~monad_ops ~async in *)
       let find k (callback:'v option -> (unit,'t) m) = 
         with_lru (fun ~state:lru ~set_state:set_lru -> 
             (* check if k is already in the cache *)
-            lru_ops_im.find k lru.lim_state |> function
-            | In_cache e -> (
-                let vopt = 
-                  match e with
-                  | Insert i -> (Some i.value)
-                  | Delete _ -> None
-                  | Lower vopt -> vopt
-                in
-                async (fun () -> callback vopt))
-            (* FIXME note the callback should not do computation on
-               receiving an argument... it must wait for the world state
-            *)
-            | Not_in_cache kk -> (
+            lru_ops_im.find k lru.lru_state_im |> function
+            | `In vopt -> async (fun () -> callback vopt)
+            | `Not_in -> (
+                (* NOTE the kk continuation deals with in-memory state *)
                 (* now we have to call to the lower level; first we check
                    that a call isn't already in process... *)
                 add_callback_on_key ~k ~callback ~lru |> fun (lru,lower_call_status) -> 
@@ -181,91 +181,70 @@ module Make(S:S) = struct
                 | `Need_to_call_lower -> 
                   (* we want to issue a `Find k call to lower, with a
                      callback that unblocks the waiting threads *)
+                  (* NOTE no need to update blocked threads - already
+                     there is a thread blocked from
+                     add_callback_on_key *)
                   let callback vopt_from_lower : (unit,'t)m =                    
                     with_lru (fun ~state:lru ~set_state:set_lru -> 
-                        (* first wake up sleeping threads *)
+                        (* first wake up sleeping threads... FIXME but does this correctly obtain the state etc? *)
                         run_callbacks_for_key ~k ~vopt_from_lower ~lru >>= fun lru -> 
-                        kk ~vopt_from_lower ~lru_state_im:lru.lim_state 
-                        |> fun (vopt,exc) -> 
-                        (* have to handle evictees by flushing to lower *)
-                        maybe_evictees_to_lower exc.evictees >>= fun () ->
-                        set_lru {lru with lim_state=exc.lru_state_im })
+                        lru_ops_im.update_from_lower k vopt_from_lower lru.lru_state_im 
+                        |> function {evictees;lru_state_im} -> 
+                          (* have to handle evictees by flushing to lower *)
+                          maybe_evictees_to_lower evictees >>= fun () ->
+                          set_lru {lru with lru_state_im=lru_state_im })
                   in
-                  to_lower (Find(k,callback))))      
+                  set_lru lru >>= fun () ->
+                  to_lower (Find(k,callback))))
 
-      let insert mode k v (callback: unit -> (unit,'t)m) =
+      let insert k v =
         with_lru (fun ~state:lru ~set_state:set_lru -> 
             (* mark "ab"; *)
-            lru_ops_im.insert k v lru.lim_state |> fun exc ->
+            lru_ops_im.insert k v lru.lru_state_im |> fun exc ->
             (* mark "bc"; *)
-            (match exc.evictees with
-             | None -> return ()
-             | Some es -> to_lower (Evictees es)) >>= fun () ->
-            (* handle mode=persist_now, lim_state *)
-            (* mark "cd"; *)
-            let lim_state,to_lower = 
-              match mode with
-              | Persist_now -> (
-                  lru_ops_im.sync_key k exc.lru_state_im |> function
-                  | Not_in_cache () -> failwith "impossible"
-                  | In_cache (e,c) -> (
-                      assert(Entry.entry_is_dirty e);
-                      (c,Some(Insert(k,v,callback)))))
-              (* FIXME order or evictees vs insert? *)
-              | Persist_later -> (exc.lru_state_im,None)
-            in
-            maybe_to_lower to_lower >>= fun () ->
+            let {evictees;lru_state_im} = exc in
+            maybe_evictees_to_lower evictees >>= fun () ->
             (* mark "de"; *)
-            set_lru {lru with lim_state}) 
-        >>= fun () ->
-        (* mark "ef"; *)
-        (* FIXME check the following *)
-        (if mode=Persist_later then async(callback) else return ())
+            set_lru {lru with lru_state_im})
 
-      let delete mode k callback = 
+      let delete k = 
         with_lru (fun ~state:lru ~set_state:set_lru -> 
-            lru_ops_im.delete k lru.lim_state 
-            |> function exc ->
-              (* update lru with evictees *)
-              maybe_evictees_to_lower exc.evictees >>= fun () ->
-              (* handle mode=persist_now, lim_state *)
-              let lim_state,to_lower = 
-                match mode with
-                | Persist_now -> (
-                    lru_ops_im.sync_key k exc.lru_state_im |> function
-                    | Not_in_cache () -> failwith "impossible"
-                    | In_cache (e,c) -> (
-                        assert(Entry.entry_is_dirty e);
-                        (c,Some(Delete(k,callback))))
-                    (* FIXME order or evictees vs insert? *))
-                | Persist_later -> (exc.lru_state_im,None)
-              in
-              maybe_to_lower to_lower >>= fun () ->
-              set_lru {lru with lim_state})
-        >>= fun () ->
-        (if mode=Persist_later then async(callback) else return ())
+            lru_ops_im.delete k lru.lru_state_im |> function {evictees;lru_state_im} ->
+              maybe_evictees_to_lower evictees >>= fun () ->
+              set_lru {lru with lru_state_im})
 
+      (* $(FIXME("""this isn't quite correct, because we can call sync, but
+         we must not set the in-memory state as already synced until
+         the call returns""")) *) 
       let sync_key k callback = 
         with_lru (fun ~state:lru ~set_state:set_lru -> 
-            lru_ops_im.sync_key k lru.lim_state |> function
-            | Not_in_cache () -> async (callback)
-            | In_cache (e,lim_state) ->             
-              match Entry.entry_is_dirty e with
-              | false -> 
-                (* just return *)
-                async (callback)
-              | true -> 
-                let to_lower =
-                  match e with
-                  | Insert{value;dirty} -> Some(Insert(k,value,callback))
-                  | Delete{dirty} -> Some(Delete(k,callback))
-                  | _ -> None
-                in
-                maybe_to_lower to_lower >>= fun () ->
-                set_lru {lru with lim_state})
+            lru_ops_im.sync_key k lru.lru_state_im |> function
+            | None -> return ()
+            | Some (kvop,lru_state_im) ->             
+              let msg = 
+                match kvop with
+                | Insert(k,v) -> Lru_msg.Insert(k,v,fun () -> callback ())
+                | Delete k -> Lru_msg.Delete(k,fun () -> callback ())
+              in
+              to_lower msg >>= fun () ->
+              (* FIXME we can't just mark one clean at this point... *)
+              set_lru {lru with lru_state_im})
+          
+      let sync_all_keys callback = 
+        with_lru (fun ~state:lru ~set_state:set_lru -> 
+            lru_ops_im.sync_all_keys lru.lru_state_im |> fun {evictees;lru_state_im} -> 
+            set_lru {lru with lru_state_im} >>= fun () ->
+            match evictees with 
+            | [] -> callback ()
+            | es -> 
+              to_lower (Evictees es) >>= fun () -> 
+              callback ()
+            (* FIXME in this case we need to have a callback for when
+               all the evictees are synced *) 
+          )
     end)
     in
-    Mt_callback_ops.{find;insert;delete;sync_key}
+    Mt_callback_ops.{find;insert;delete;sync_key;sync_all_keys}
 
 
 
@@ -276,26 +255,21 @@ module Make(S:S) = struct
 
 
   let make_lru_ops ~(callback_ops:('k,'v,'t)Mt_callback_ops.mt_callback_ops) =
-    let Mt_callback_ops.{find;insert;delete;sync_key} = callback_ops in
+    let Mt_callback_ops.{find;insert;delete;sync_key;sync_all_keys} = callback_ops in
     let {ev_create=create;ev_signal=signal;ev_wait=wait} = event_ops in
     let mt_find k = 
       create() >>= fun e ->
       (find k (fun v -> signal e v)) >>= fun () -> wait e
     in
-    let mt_insert mode k v =
-      create() >>= fun e ->
-      (insert mode k v (fun () -> signal e ())) >>= fun () -> wait e
-    in
-    let mt_delete mode k = 
-      create() >>= fun e ->
-      (delete mode k (fun () -> signal e ())) >>= fun () -> wait e
-    in
+    let mt_insert k v = insert k v in
+    let mt_delete k = delete k in
     let mt_sync_key k =
       create() >>= fun e -> 
       (sync_key k (fun () -> signal e ())) >>= fun () -> wait e
     in
     let mt_sync_all_keys () =
-      failwith "FIXME TODO not implemented yet"
+      create () >>= fun e -> 
+      sync_all_keys (fun es -> signal e es) >>= fun () -> wait e
     in
     let open Mt_ops in
     {mt_find;mt_insert;mt_delete;mt_sync_key;mt_sync_all_keys}
@@ -329,10 +303,12 @@ module Examples = struct
     type t = lwt 
 
     module I = Lru_in_mem.Examples.Int_int
+
+    let factory = I.lru_factory_im
                  
-    let empty ~max_size ~evict_count = 
-      let s = I.make_init_lru_state_im ~max_size ~evict_count in
-      mt_initial_state ~initial_lim_state:s ~k_cmp:Int_.compare
+    let make_empty params = 
+      let lru_state_im = factory#empty params in
+      mt_initial_state ~lru_state_im ~k_cmp:Int_.compare
     
     module M = Make(struct include With_lwt type t = lwt end)
 
@@ -341,10 +317,10 @@ module Examples = struct
     type lru = (k, v, I.lru, t_map, t) mt_state
 
     let make_ops ~with_state ~to_lower = 
-      M.make ~lru_ops_im:I.lru_ops_im ~with_lru:with_state ~to_lower
+      M.make ~lru_ops_im:factory#lru_ops_im ~with_lru:with_state ~to_lower
         
     let lru_factory : _ lru_factory = object
-      method empty=empty
+      method empty=make_empty
       method make_ops=make_ops
     end
 

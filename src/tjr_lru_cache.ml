@@ -13,19 +13,21 @@ include Summary
 (** Private modules *)
 
 (** {2 Single-threaded version} *)
+
 module Im_intf = Im_intf
-    
+
 module Lru_in_mem = Lru_in_mem
 
 module Test_performance = Test_performance
 (**/**)
 
 (** NOTE module renamed from Entry *)
-module Lru_entry = Im_intf.Entry
+module Lru_entry = Im_intf.Lru_entry
+type 'v lru_entry = 'v Lru_entry.lru_entry
 
 module Mt_intf = Mt_intf
 
-type persist_mode = Mt_intf.persist_mode = Persist_later | Persist_now
+(* type persist_mode = Mt_intf.persist_mode = Persist_later | Persist_now *)
 
 module Lru_msg = Mt_intf.Lru_msg
 type ('k,'v,'t) lru_msg = ('k,'v,'t) Lru_msg.lru_msg

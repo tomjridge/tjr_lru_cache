@@ -189,11 +189,16 @@ module Make() = struct
         (* open Tjr_lru_cache *)
         open Im_intf
 
-        let lru_ops = Lru_in_mem.Examples.Int_int.lru_ops_im
-        (* let cache_map_ops=Tjr_map.make_map_ops Stdlib.compare *)
+        let factory = Lru_in_mem.Examples.Int_int.lru_factory_im
+        let lru_ops = factory#lru_ops_im
 
         (* FIXME cap and evict count effect on performance??? *)
-        let cache_state = ref @@ Lru_in_mem.Examples.Int_int.make_init_lru_state_im ~max_size:cap ~evict_count
+        let params = object
+          method max_size=cap
+          method evict_count=evict_count
+        end
+        
+        let cache_state = ref @@ factory#empty params
 
         let l = lru_ops
 

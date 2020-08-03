@@ -5,6 +5,7 @@
 
 open Im_intf
 
+(*
 (** A calling mode can be "later" (ie, perform immediately in mem
     and return; persist sometime later) or "now", in which case we
     can optionally supply a callback. A call can be blocking or
@@ -12,7 +13,7 @@ open Im_intf
     launch an async promise that resolves without blocking the
     caller. Thus, we implement only blocking versions of calls. *)
 type persist_mode = Persist_later | Persist_now
-
+*)
 
 (** The LRU operations, expressed using callbacks. This is somehow
    more primitive than the monadic map interface. This interface is
@@ -21,10 +22,11 @@ type persist_mode = Persist_later | Persist_now
 module Mt_callback_ops = struct
   (** The interface *provided* by the LRU, with callbacks *)
   type ('k,'v,'t) mt_callback_ops = {
-    find     : 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
-    insert   : persist_mode -> 'k -> 'v -> (unit -> (unit,'t)m) -> (unit,'t)m;
-    delete   : persist_mode -> 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
-    sync_key : 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+    find          : 'k -> ('v option -> (unit,'t)m) -> (unit,'t)m;
+    insert        : 'k -> 'v -> (unit,'t)m;
+    delete        : 'k -> (unit,'t)m;
+    sync_key      : 'k -> (unit -> (unit,'t)m) -> (unit,'t)m;
+    sync_all_keys : (unit -> (unit,'t)m) -> (unit,'t)m;
   }
 end
 (* NOTE don't include so we don't clash with other map-like ops *)
@@ -51,8 +53,8 @@ module Mt_ops = struct
   (* $(PIPE2SH("""sed -n '/type[ ].*mt_ops = /,/}/p' >GEN.mt_ops.ml_""")) *)
   type ('k,'v,'t) mt_ops = {
     mt_find          : 'k -> ('v option,'t) m; 
-    mt_insert        : persist_mode -> 'k -> 'v -> (unit,'t) m;
-    mt_delete        : persist_mode -> 'k -> (unit,'t) m;
+    mt_insert        : 'k -> 'v -> (unit,'t) m;
+    mt_delete        : 'k -> (unit,'t) m;
     mt_sync_key      : 'k -> (unit,'t) m;
     mt_sync_all_keys : unit -> (unit,'t) m;
   }
@@ -87,17 +89,17 @@ NOTE t_map is "thread map"
 
 *)
   type ('k,'v,'lru,'t_map,'t) mt_state = { 
-    lim_state           : 'lru lru_state_im; 
+    lru_state_im        : 'lru lru_state_im; 
     blocked_threads     : 't_map;
     blocked_threads_ops : ('k,('v,'t)blocked_thread list,'t_map)Tjr_map.map_ops
   }
   
-  let mt_initial_state ~(initial_lim_state:'lru lru_state_im) ~k_cmp = 
-    let lim_state = initial_lim_state in
-    let blocked_threads_ops : ('k,('v,'t)blocked_thread list,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = 
+  let mt_initial_state ~(lru_state_im:'lru lru_state_im) ~k_cmp = 
+    let blocked_threads_ops 
+      : ('k,('v,'t)blocked_thread list,(_,_,unit)Tjr_map.map)Tjr_map.map_ops = 
       Tjr_map.unsafe_make_map_ops k_cmp in
     {
-      lim_state; 
+      lru_state_im; 
       blocked_threads=blocked_threads_ops.empty;
       blocked_threads_ops;
     }
@@ -113,13 +115,14 @@ module Lru_msg = struct
      disk. *)
   (* $(PIPE2SH("""sed -n '/type[ ].*lru_msg = /,/list/p' >GEN.lru_msg.ml_""")) *)
   type ('k,'v,'t) lru_msg = 
-    | Insert of 'k*'v*(unit -> (unit,'t)m)
-    | Delete of 'k*(unit -> (unit,'t)m)
-    | Find of 'k * ('v option -> (unit,'t)m)
-    | Evictees of ('k * 'v entry) list
+    | Insert   of 'k*'v*(unit -> (unit,'t)m)
+    | Delete   of 'k*(unit -> (unit,'t)m)
+    | Find     of 'k * ('v option -> (unit,'t)m)
+    | Evictees of ('k,'v)kvop list
 end
 include Lru_msg
 
+type lru_params = lru_params_im
 
 module Lru_factory = struct
   
@@ -127,10 +130,7 @@ module Lru_factory = struct
      type is unreadable in odoc *)
   (* $(PIPE2SH("""sed -n '/type[ ].*lru_factory = /,/^ *>/p' >GEN.lru_factory.ml_""")) *)
   type ('k,'v,'lru,'t) lru_factory = <
-    empty :       
-      max_size    : int -> 
-      evict_count : int -> 
-      'lru;
+    empty :  lru_params -> 'lru;
 
     make_ops : 
       with_state : ('lru,'t) with_state ->
