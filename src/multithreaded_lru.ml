@@ -52,6 +52,10 @@ the pcache.
 open Im_intf
 open Mt_intf
 
+(* $(CONFIG("multithreaded_lru.ml: dont_log")) *)
+let dont_log = true
+
+
 module type S = sig
   type t
   val monad_ops : t monad_ops
@@ -86,7 +90,8 @@ module Make(S:S) = struct
       let blocked_threads = m.add k xs lru.blocked_threads in
       { lru with blocked_threads },`Lower_call_in_progress
     | None -> 
-      Printf.printf "%s: add_callback_on_key\n%!" __FILE__;
+      assert(dont_log || (
+          Printf.printf "%s: add_callback_on_key\n%!" __FILE__; true));
       let blocked_threads = m.add k [callback] lru.blocked_threads in
       (* we want to issue a `Find k call to lower, with a callback that
          unblocks the waiting threads *)
@@ -213,9 +218,8 @@ module Make(S:S) = struct
               maybe_evictees_to_lower evictees >>= fun () ->
               set_lru {lru with lru_state_im})
 
-      (* $(FIXME("""this isn't quite correct, because we can call sync, but
-         we must not set the in-memory state as already synced until
-         the call returns""")) *) 
+      (* $(FIXME("""this marks all entries as clean before we have
+         received the acknowledgement from the lower layer""")) *) 
       let sync_key k callback = 
         with_lru (fun ~state:lru ~set_state:set_lru -> 
             lru_ops_im.sync_key k lru.lru_state_im |> function
@@ -223,10 +227,11 @@ module Make(S:S) = struct
             | Some (kvop,lru_state_im) ->             
               let msg = 
                 match kvop with
-                | Insert(k,v) -> Lru_msg.Insert(k,v,fun () -> callback ())
-                | Delete k -> Lru_msg.Delete(k,fun () -> callback ())
+                | Insert(k,v) -> Lru_msg.Insert(k,v,fun () -> return ())
+                | Delete k -> Lru_msg.Delete(k,fun () -> return ())
               in
               to_lower msg >>= fun () ->
+              to_lower (Lru_msg.Sync (fun () -> callback ())) >>= fun () ->
               (* FIXME we can't just mark one clean at this point... *)
               set_lru {lru with lru_state_im})
           
@@ -235,12 +240,11 @@ module Make(S:S) = struct
             lru_ops_im.sync_all_keys lru.lru_state_im |> fun {evictees;lru_state_im} -> 
             set_lru {lru with lru_state_im} >>= fun () ->
             match evictees with 
-            | [] -> callback ()
+            | [] -> to_lower (Sync (fun () -> callback ()))
             | es -> 
               to_lower (Evictees es) >>= fun () -> 
-              callback ()
-            (* FIXME in this case we need to have a callback for when
-               all the evictees are synced *) 
+              to_lower (Sync (fun () -> callback ()))
+              (* FIXME we can't just mark entries as clean, because another subsequent sync needs to pause for the sync to complete *)
           )
     end)
     in

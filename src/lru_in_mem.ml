@@ -177,7 +177,6 @@ module Make_v1(S:S) = struct
         | true -> 
           let e' = Lru_entry.mark_clean e in
           let lru_state = L.add k e' c.lru_state in
-          (* NOTE this returns the old entry *)
           Some(dirty_entry_to_kvop k e,{c with lru_state})
 
     let sync_all_keys (s:lru lru_state_im) : _ evictees_x_state = 
@@ -185,8 +184,7 @@ module Make_v1(S:S) = struct
           (* kvs are to process; lru is the new clean lru; es are the evictees *)
           match kvs with
           | [] -> 
-            (* FIXME just use an empty list *)
-            {evictees=[];
+            {evictees=es;
              lru_state_im={s with lru_state=lru}}
           | (k,v)::kvs -> 
             let lru = L.add k (mark_clean v) lru in

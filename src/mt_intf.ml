@@ -15,6 +15,8 @@ open Im_intf
 type persist_mode = Persist_later | Persist_now
 *)
 
+(* $(FIXME("""sync ops should probably be called flush?""")) *)
+
 (** The LRU operations, expressed using callbacks. This is somehow
    more primitive than the monadic map interface. This interface is
    converted into the typical monadic "syncable map" interface using
@@ -119,6 +121,7 @@ module Lru_msg = struct
     | Delete   of 'k*(unit -> (unit,'t)m)
     | Find     of 'k * ('v option -> (unit,'t)m)
     | Evictees of ('k,'v)kvop list
+    | Sync     of (unit -> (unit,'t)m)
 end
 include Lru_msg
 
