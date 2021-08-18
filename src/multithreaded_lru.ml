@@ -312,7 +312,7 @@ module Examples = struct
                  
     let make_empty params = 
       let lru_state_im = factory#empty params in
-      mt_initial_state ~lru_state_im ~k_cmp:Int_.compare
+      mt_initial_state ~lru_state_im ~k_cmp:Int.compare
     
     module M = Make(struct include With_lwt type t = lwt end)
 

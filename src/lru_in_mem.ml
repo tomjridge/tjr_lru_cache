@@ -233,7 +233,7 @@ module Examples = struct
     module S = struct
       type k = int
       type v = int
-      let k_cmp = Int_.compare
+      let k_cmp = Int.compare
     end
     module M = Make(S)
     type lru = M.lru
